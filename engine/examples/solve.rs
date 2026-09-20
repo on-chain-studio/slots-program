@@ -117,9 +117,17 @@ struct Goal {
     bet_mults: [u16; SYMS],
     /// hit-rate window under the mode's own play (optimal, for hold)
     hit: (f64, f64),
+    /// Cap on the last (floor) step of the ladder. A frequent machine keeps most of its RTP
+    /// and hit rate in a very common floor symbol — capping that step chokes it below any
+    /// reachable RTP target — so only a machine that can afford a bounded floor sets one.
+    floor_cap: f64,
 }
 
 const LINES: u16 = 5;
+
+/// Adjacent-tier frequency bounds for line modes, on the across-reels count product.
+const RATIO_MIN: f64 = 1.25;
+const RATIO_MAX: f64 = 6.0;
 
 fn score(g: &Goal, counts: &[[usize; SYMS]; REELS], rots: &[usize; REELS], mults: &[u16; SYMS]) -> Option<f64> {
     // structural sanity per reel, and a rarer symbol never likelier than a commoner one —
@@ -129,11 +137,25 @@ fn score(g: &Goal, counts: &[[usize; SYMS]; REELS], rots: &[usize; REELS], mults
             return None;
         }
     }
+    // Line modes fence the ladder's *shape*: each step down the paytable must be at least
+    // RATIO_MIN likelier and at most RATIO_MAX — equal-frequency tiers and cliffs both read
+    // as broken odds. A graded penalty rather than a rejection, because the valid region is
+    // thin and a climb has to be able to walk through it; the winner is re-checked hard in
+    // main. Hold keeps the bare ordering: its effective frequencies come out of the hold DP,
+    // not the raw products, so this fence would be the wrong one.
+    let mut shape = 0.0;
     for i in 1..SYMS {
-        let p_prev: usize = counts.iter().map(|c| c[i - 1]).product();
-        let p_this: usize = counts.iter().map(|c| c[i]).product();
-        if p_this < p_prev {
-            return None;
+        let p_prev = counts.iter().map(|c| c[i - 1]).product::<usize>() as f64;
+        let p_this = counts.iter().map(|c| c[i]).product::<usize>() as f64;
+        if g.mode == MODE_HOLD {
+            if p_this < p_prev {
+                return None;
+            }
+        } else {
+            let cap = if i == SYMS - 1 { g.floor_cap } else { RATIO_MAX };
+            let (lo, hi) = (p_prev * RATIO_MIN, p_prev * cap);
+            if p_this < lo { shape += (lo - p_this) / lo; }
+            if p_this > hi { shape += (p_this - hi) / hi; }
         }
     }
     // A cornered placement leaks a run; a strip with one is not a candidate.
@@ -143,7 +165,9 @@ fn score(g: &Goal, counts: &[[usize; SYMS]; REELS], rots: &[usize; REELS], mults
         }
     }
     let r = analysis::report(&machine(counts, rots, mults, g.mode)).ok()?;
-    let mut s = (r.rtp - TARGET_RTP).abs() * 200.0;
+    // Weighted so even a fraction-of-a-percent shape violation outranks any reachable RTP
+    // improvement — the fence bends during the walk but never in the answer.
+    let mut s = (r.rtp - TARGET_RTP).abs() * 200.0 + shape * 2000.0;
     if r.hit_rate < g.hit.0 { s += (g.hit.0 - r.hit_rate) * 60.0; }
     if r.hit_rate > g.hit.1 { s += (r.hit_rate - g.hit.1) * 60.0; }
     Some(s)
@@ -216,18 +240,30 @@ fn main() {
     // The published prizes, in whole-bet multiples. What each machine *is*, chosen by hand;
     // the solver only decides how often.
     let goals = [
-        Goal { name: "GOLD RUSH",    mode: MODE_LINES, bet_mults: [50, 20, 10, 6, 3, 2, 1],   hit: (0.30, 0.42) },
+        Goal { name: "GOLD RUSH",    mode: MODE_LINES, bet_mults: [50, 20, 10, 6, 3, 2, 1],   hit: (0.30, 0.42), floor_cap: f64::INFINITY },
         // The hold machine cannot be the frequent one: optimal play *chases* — holds convert
         // near-misses into mid-ladder wins — which drags the average win up, and at a x2 floor
         // hit x avg-win must still fit under 0.9. So its temper is the chase itself: three
         // decisions per bet, rarer but larger landings. The window only fences pathology.
-        Goal { name: "GRAVITY WELL", mode: MODE_HOLD,  bet_mults: [20, 10, 6, 4, 3, 2, 1],    hit: (0.24, 0.38) },
-        Goal { name: "LUCKY SPINS",  mode: MODE_LINES, bet_mults: [200, 40, 20, 10, 5, 2, 1], hit: (0.16, 0.24) },
+        Goal { name: "GRAVITY WELL", mode: MODE_HOLD,  bet_mults: [20, 10, 6, 4, 3, 2, 1],    hit: (0.24, 0.38), floor_cap: f64::INFINITY },
+        Goal { name: "LUCKY SPINS",  mode: MODE_LINES, bet_mults: [200, 40, 20, 10, 5, 2, 1], hit: (0.16, 0.24), floor_cap: RATIO_MAX },
     ];
 
     let mut out = String::from("[\n");
     for (i, g) in goals.iter().enumerate() {
         let (counts, rots, mults) = solve(g, 0x5107 + i as u64);
+        if g.mode != MODE_HOLD {
+            for s in 1..SYMS {
+                let p_prev = counts.iter().map(|c| c[s - 1]).product::<usize>() as f64;
+                let p_this = counts.iter().map(|c| c[s]).product::<usize>() as f64;
+                let cap = if s == SYMS - 1 { g.floor_cap } else { RATIO_MAX };
+                assert!(
+                    p_this >= p_prev * RATIO_MIN && p_this <= p_prev * cap,
+                    "{}: tier {} product {} outside [{}, {}] of previous {}",
+                    g.name, s, p_this, p_prev * RATIO_MIN, p_prev * cap, p_prev,
+                );
+            }
+        }
         let m = machine(&counts, &rots, &mults, g.mode);
         let r = analysis::report(&m).unwrap();
         print!(
