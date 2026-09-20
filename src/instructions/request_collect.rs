@@ -75,7 +75,21 @@ impl ProcessInstruction for RequestCollect {
                 return Err(GameError::NotRolled.into());
             }
             pda::validate(program_id, spin_account, &[b"spin", user.key.as_ref()])?;
-            payout(spin, &terms)?
+            let amount = payout(spin, &terms)?;
+            // While a round decision is still open — a hold respin, or a gamble win that can
+            // ride further — only the consenter may collect. Otherwise a stranger could
+            // force-settle the current grid and rob the player of their remaining respins or
+            // ladder climbs. Once nothing is left to decide, collect stays permissionless so an
+            // abandoned finished spin can still be cranked closed by anyone.
+            let deciding = match terms.mode {
+                MODE_HOLD => spin.round + 1 < terms.rounds() as u64,
+                MODE_GAMBLE => amount > 0 && spin.round < terms.gamble_rungs as u64,
+                _ => false,
+            };
+            if deciding && wallet.key.to_bytes() != spin.consenter {
+                return Err(GameError::Unauthorized.into());
+            }
+            amount
         };
 
         // A loss is an empty receipt: the settle moves nothing and still fires the callback,
