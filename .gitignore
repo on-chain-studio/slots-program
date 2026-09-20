@@ -1,0 +1,13 @@
+# Build output
+target/
+node_modules/
+dist/
+
+# The program keypair. It only signs the very first deploy — upgrades are authorised by the
+# upgrade authority — but it is still a private key and does not belong in a repo. Back it up
+# somewhere else; losing it means the program can never be deployed at this address again.
+keys/
+
+# Local machine state
+.DS_Store
+.claude/settings.local.json

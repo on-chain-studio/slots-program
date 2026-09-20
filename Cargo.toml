@@ -1,0 +1,33 @@
+[package]
+name = "slots"
+version = "0.1.0"
+description = "Slot Machines"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+no-entrypoint = []
+
+[dependencies]
+solana-program = "3"
+solana-system-interface = "2"
+ephemeral-rollups-sdk = { version = "0.14.3", features = ["modular-sdk", "access-control"] }
+borsh = { version = "1", features = ["derive"] }
+slots-engine = { path = "engine" }
+bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
+
+[profile.release]
+# "s" not "z": "z" pushes two deps past sBPF's 4096-byte stack frame (UB, not just slower).
+opt-level = "s"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[lints.rust]
+unexpected_cfgs = { level = "allow" }
+
+[dev-dependencies]
+mollusk-svm = "0.4"
+solana-sdk = "3"
