@@ -18,6 +18,8 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 }
 
 mod rng;
+mod runs;
+pub use runs::{value_runs, RunRules, RunWin, Span};
 pub use rng::{Rng, TOTAL};
 
 pub const MAX_REELS: usize = 5;

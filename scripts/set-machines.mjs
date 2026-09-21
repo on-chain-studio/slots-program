@@ -19,6 +19,20 @@ const LINES = [[1, 1, 1], [0, 0, 0], [2, 2, 2], [0, 1, 2], [2, 1, 0]];
 const MACHINES = JSON.parse(
   fs.readFileSync(new URL('machines.json', import.meta.url), 'utf8'));
 
+// A reel strip is cyclic and the visible window spans consecutive stops, so three identical
+// symbols in a row show as a vertical triple — which no payline pays, and looks like a missed
+// win. Refuse to publish one; the solver never emits them, but a hand-authored shelf might.
+for (const m of MACHINES) {
+  m.strips.forEach((strip, reel) => {
+    const n = strip.length;
+    for (let i = 0; i < n; i++) {
+      if (strip[i] === strip[(i + 1) % n] && strip[i] === strip[(i + 2) % n]) {
+        throw new Error(`${m.name}: reel ${reel} has three of symbol ${strip[i]} in a row at stop ${i}`);
+      }
+    }
+  });
+}
+
 const vec = (items, enc) => Buffer.concat([u32(items.length), ...items.map(enc)]);
 const winOf = (m) => Math.floor(GAMBLE_FAIR * (m.win_pct / 50));
 
