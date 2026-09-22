@@ -1,25 +1,35 @@
-use borsh::BorshDeserialize;
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError, pubkey::Pubkey};
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError};
 
 use crate::constants::{is_admin, treasury_seed};
-use crate::instruction::ProcessInstruction;
 use crate::utils::{pda, vault};
 
 /// Accounts: [admin (signer), treasury, ledger, reserve, permission, permission_program,
 ///            vault_program, token_program, system_program,
 ///            then (reserve_token, treasury_token) per non-zero mint, in entry order]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct CloseLedger {
     pub which: u8,
 }
 
 
-impl ProcessInstruction for CloseLedger {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [admin, treasury, ledger, reserve, permission, permission_program,
-             vault_program, token_program, system_program, extra @ ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl CloseLedger {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn process<'a>(
+        &self,
+        admin: &AccountInfo<'a>,
+        treasury: &AccountInfo<'a>,
+        ledger: &AccountInfo<'a>,
+        reserve: &AccountInfo<'a>,
+        permission: &AccountInfo<'a>,
+        permission_program: &AccountInfo<'a>,
+        vault_program: &AccountInfo<'a>,
+        token_program: &AccountInfo<'a>,
+        system_program: &AccountInfo<'a>,
+        extra: &[AccountInfo<'a>],
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if !admin.is_signer || !is_admin(admin.key) {
             return Err(ProgramError::MissingRequiredSignature);

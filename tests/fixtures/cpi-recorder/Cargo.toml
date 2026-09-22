@@ -1,0 +1,18 @@
+[package]
+name = "cpi-recorder"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Built on its own: `cargo build-sbf --manifest-path tests/fixtures/cpi-recorder/Cargo.toml
+# --sbf-out-dir tests/fixtures`. The .so it produces is committed next to it.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+solana-program = "3"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow" }

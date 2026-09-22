@@ -1,8 +1,7 @@
-use borsh::BorshDeserialize;
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{account_info::AccountInfo, program_error::ProgramError, entrypoint::ProgramResult};
 
 use crate::error::GameError;
-use crate::instruction::ProcessInstruction;
 use crate::state::config::MODE_GAMBLE;
 use crate::state::spin::{Spin, SpinStatus};
 use crate::utils::{engine, pda};
@@ -15,14 +14,17 @@ use crate::utils::{engine, pda};
 /// flip: a won flip doubles what rides, a lost one leaves nothing to climb with, and the way off
 /// the ladder at any point — banked, busted, or done — is `RequestCollect`.
 /// Accounts: [signer, spin]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct Gamble;
 
-impl ProcessInstruction for Gamble {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [signer, spin_account, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl Gamble {
+    #[inline(always)]
+    pub fn process<'a>(
+        &self,
+        signer: &AccountInfo<'a>,
+        spin_account: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if !signer.is_signer {
             return Err(ProgramError::MissingRequiredSignature);

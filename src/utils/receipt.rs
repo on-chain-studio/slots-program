@@ -130,7 +130,7 @@ pub fn close<'a>(
 /// `["receipt", program, consenter]` — the session key's receipt for this program.
 pub fn address(consenter: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(
-        &[b"receipt", crate::entrypoint::ID.as_ref(), consenter.as_ref()],
+        &[b"receipt", crate::ID.as_ref(), consenter.as_ref()],
         &VAULT_PROGRAM,
     )
     .0

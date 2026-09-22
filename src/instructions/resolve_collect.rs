@@ -1,9 +1,8 @@
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use ephemeral_rollups_sdk::consts::EPHEMERAL_VAULT_ID;
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use solana_program::{account_info::AccountInfo, pubkey::Pubkey, entrypoint::ProgramResult};
 
 use crate::error::GameError;
-use crate::instruction::ProcessInstruction;
 use crate::instructions::request_collect::payout;
 use crate::state::analytics::Analytics;
 use crate::state::spin::{Spin, SpinStatus};
@@ -12,17 +11,25 @@ use crate::utils::{pda, receipt};
 /// The settle callback: the payout has moved (or there was none), so the spin closes.
 /// Accounts: [receipt, vault_authority (signer), house, spin, ephemeral_vault, magic_program,
 ///            analytics]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct ResolveCollect {
     pub human: Pubkey,
 }
 
-impl ProcessInstruction for ResolveCollect {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [_receipt_account, vault_authority, house, spin_account, ephemeral_vault,
-             magic_program, analytics_account, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl ResolveCollect {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn process<'a>(
+        &self,
+        _receipt_account: &AccountInfo<'a>,
+        vault_authority: &AccountInfo<'a>,
+        house: &AccountInfo<'a>,
+        spin_account: &AccountInfo<'a>,
+        ephemeral_vault: &AccountInfo<'a>,
+        magic_program: &AccountInfo<'a>,
+        analytics_account: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if *ephemeral_vault.key != EPHEMERAL_VAULT_ID {
             return Err(GameError::InvalidPDA.into());

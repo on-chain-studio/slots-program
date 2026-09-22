@@ -1,8 +1,7 @@
-use borsh::BorshDeserialize;
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult};
 
 use crate::error::GameError;
-use crate::instruction::{ix, ProcessInstruction};
 use crate::state::spin::{Spin, SpinStatus};
 use crate::utils::{pda, vrf};
 
@@ -10,15 +9,24 @@ use crate::utils::{pda, vrf};
 /// `Requested`), so a dropped oracle callback cannot strand a paid bet — anyone may re-fire it,
 /// and the house pays either way.
 /// Accounts: [user, house, spin, identity, oracle_queue, slot_hashes, system_program, vrf_program]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestReveal;
 
-impl ProcessInstruction for RequestReveal {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [user, house, spin_account, identity, oracle_queue, slot_hashes,
-             system_program, vrf_program, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl RequestReveal {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn process<'a>(
+        &self,
+        user: &AccountInfo<'a>,
+        house: &AccountInfo<'a>,
+        spin_account: &AccountInfo<'a>,
+        identity: &AccountInfo<'a>,
+        oracle_queue: &AccountInfo<'a>,
+        slot_hashes: &AccountInfo<'a>,
+        system_program: &AccountInfo<'a>,
+        vrf_program: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
         let identity_bump = pda::validate(program_id, identity, &[b"identity"])?;
@@ -49,7 +57,7 @@ impl ProcessInstruction for RequestReveal {
             program_id, house, identity, identity_bump, oracle_queue, system_program,
             slot_hashes, vrf_program,
             caller_seed,
-            ix::CallbackReveal.to_le_bytes(),
+            crate::SlotsInstruction::CALLBACK_REVEAL.to_le_bytes(),
             vec![vrf::SerializableAccountMeta {
                 pubkey: *spin_account.key,
                 is_signer: false,

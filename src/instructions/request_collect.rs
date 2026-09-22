@@ -1,8 +1,7 @@
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
 
 use crate::error::GameError;
-use crate::instruction::{ix, ProcessInstruction};
 use crate::state::config::{MODE_GAMBLE, MODE_HOLD};
 use crate::state::spin::{Spin, SpinStatus};
 use crate::utils::{engine, pda, receipt, vault};
@@ -17,7 +16,7 @@ use crate::utils::{engine, pda, receipt, vault};
 /// finished spin and never settle, destroying the win and blocking that player for good.
 /// Accounts: [user, house, spin, receipt, ephemeral_vault, magic_program, vault_program,
 ///            wallet (signer), house_ledger, magic_context]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestCollect;
 
 /// What a finished spin pays, given everything the account holds. Pure, and shared with
@@ -44,12 +43,23 @@ pub fn payout(spin: &Spin, terms: &crate::state::MachineConfig) -> Result<u64, P
     }
 }
 
-impl ProcessInstruction for RequestCollect {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [user, house, spin_account, receipt_account, ephemeral_vault, magic_program,
-             vault_program, wallet, house_ledger, magic_context, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl RequestCollect {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn process<'a>(
+        &self,
+        user: &AccountInfo<'a>,
+        house: &AccountInfo<'a>,
+        spin_account: &AccountInfo<'a>,
+        receipt_account: &AccountInfo<'a>,
+        ephemeral_vault: &AccountInfo<'a>,
+        magic_program: &AccountInfo<'a>,
+        vault_program: &AccountInfo<'a>,
+        wallet: &AccountInfo<'a>,
+        house_ledger: &AccountInfo<'a>,
+        magic_context: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         // A win may open a new token slot on the player's ledger; the vault needs the owner's
         // consent, which is the session key signing here.
@@ -110,7 +120,7 @@ impl ProcessInstruction for RequestCollect {
             program_id,
             &[b"house", &[house_bump]],
             &[*user.key, *house.key],
-            ix::ResolveCollect,
+            crate::SlotsInstruction::RESOLVE_COLLECT,
             &[],
             &movements,
         )

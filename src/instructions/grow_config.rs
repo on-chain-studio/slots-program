@@ -1,28 +1,31 @@
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
     account_info::AccountInfo, entrypoint::MAX_PERMITTED_DATA_INCREASE,
-    entrypoint::ProgramResult, program::invoke, program_error::ProgramError, pubkey::Pubkey,
+    entrypoint::ProgramResult, program::invoke, program_error::ProgramError,
 };
 use solana_system_interface::instruction as system_instruction;
 
 use crate::constants::is_admin;
-use crate::instruction::ProcessInstruction;
 use crate::state::config::{Config, MACHINE_SIZE};
 use crate::utils::pda;
 
 /// Buys shelf room for more machines and pays the rent. Admin only. A big jump is several calls:
 /// the per-instruction growth cap is checked here for a clear error.
 /// Accounts: [admin (signer, payer), config, system_program]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct GrowConfig {
     pub add_machines: u16,
 }
 
-impl ProcessInstruction for GrowConfig {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [admin, config_account, system_program, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl GrowConfig {
+    #[inline(always)]
+    pub fn process<'a>(
+        &self,
+        admin: &AccountInfo<'a>,
+        config_account: &AccountInfo<'a>,
+        system_program: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if !admin.is_signer || !is_admin(admin.key) {
             return Err(ProgramError::MissingRequiredSignature);

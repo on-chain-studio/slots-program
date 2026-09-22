@@ -11,6 +11,8 @@ crate-type = ["cdylib", "lib"]
 no-entrypoint = []
 
 [dependencies]
+solarium = { path = "../../sensorial/systems/solarium/crates/solarium" }
+solarium-program = { path = "../../sensorial/systems/solarium/crates/solarium-program" }
 solana-program = "3"
 solana-system-interface = "2"
 ephemeral-rollups-sdk = { version = "0.14.3", features = ["modular-sdk", "access-control"] }
@@ -31,3 +33,8 @@ unexpected_cfgs = { level = "allow" }
 [dev-dependencies]
 mollusk-svm = "0.4"
 solana-sdk = "3"
+# mollusk-svm 0.4 speaks the 2.x types.
+solana-account = "2.2"
+solana-instruction = "2.2"
+solana-pubkey = "2.2"
+solana-log-collector = "2.3"

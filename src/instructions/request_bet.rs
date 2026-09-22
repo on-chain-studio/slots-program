@@ -1,8 +1,7 @@
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
 
 use crate::error::GameError;
-use crate::instruction::{ix, ProcessInstruction};
 use crate::state::Config;
 use crate::utils::{pda, receipt, vault};
 
@@ -11,17 +10,28 @@ use crate::utils::{pda, receipt, vault};
 /// only if it is paid for, and a dropped settle costs nothing and creates nothing.
 /// Accounts: [wallet (signer, consents), user, config, house, receipt, ephemeral_vault,
 ///            magic_program, vault_program, house_ledger, magic_context]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestBet {
     pub machine_id: u64,
 }
 
-impl ProcessInstruction for RequestBet {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [wallet, user, config_account, house, receipt_account, ephemeral_vault,
-             magic_program, vault_program, house_ledger, magic_context, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl RequestBet {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn process<'a>(
+        &self,
+        wallet: &AccountInfo<'a>,
+        user: &AccountInfo<'a>,
+        config_account: &AccountInfo<'a>,
+        house: &AccountInfo<'a>,
+        receipt_account: &AccountInfo<'a>,
+        ephemeral_vault: &AccountInfo<'a>,
+        magic_program: &AccountInfo<'a>,
+        vault_program: &AccountInfo<'a>,
+        house_ledger: &AccountInfo<'a>,
+        magic_context: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if !wallet.is_signer {
             return Err(ProgramError::MissingRequiredSignature);
@@ -55,7 +65,7 @@ impl ProcessInstruction for RequestBet {
             program_id,
             &[b"house", &[house_bump]],
             &[*user.key, *house.key],
-            ix::ResolveBet,
+            crate::SlotsInstruction::RESOLVE_BET,
             &args,
             &movements,
         )

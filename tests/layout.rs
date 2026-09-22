@@ -149,31 +149,97 @@ fn the_ladder_is_counted_into_the_worst_bet() {
 
 #[test]
 fn the_wire_discriminators_never_move() {
-    // Position in the instructions! list is the wire discriminator. These are the numbers every
-    // client is built against; if this test needs editing, old clients are already broken.
-    use slots::instruction::ix;
-    assert_eq!(ix::Initialize, 1);
-    assert_eq!(ix::Delegate, 2);
-    assert_eq!(ix::Undelegate, 3);
-    assert_eq!(ix::RequestUndelegation, 4);
-    assert_eq!(ix::SetMachine, 5);
-    assert_eq!(ix::GrowConfig, 6);
-    assert_eq!(ix::CloseSpin, 7);
-    assert_eq!(ix::OpenLedger, 8);
-    assert_eq!(ix::DelegateTreasury, 9);
-    assert_eq!(ix::UndelegateTreasury, 10);
-    assert_eq!(ix::CloseLedger, 11);
-    assert_eq!(ix::AuthorizeTreasury, 12);
-    assert_eq!(ix::SetPrivacy, 13);
-    assert_eq!(ix::WithdrawHouse, 14);
-    assert_eq!(ix::RequestBet, 16);
-    assert_eq!(ix::ResolveBet, 17);
-    assert_eq!(ix::RequestReveal, 18);
-    assert_eq!(ix::CallbackReveal, 19);
-    assert_eq!(ix::Hold, 20);
-    assert_eq!(ix::Gamble, 21);
-    assert_eq!(ix::RequestCollect, 22);
-    assert_eq!(ix::ResolveCollect, 23);
+    // The little-endian u64 an instruction starts with. These are the numbers every client is
+    // built against, and the settle and VRF callbacks are registered with; if this test needs
+    // editing, old clients are already broken.
+    use slots::SlotsInstruction as ix;
+    assert_eq!(ix::INITIALIZE, 1);
+    assert_eq!(ix::DELEGATE, 2);
+    assert_eq!(ix::UNDELEGATE, 3);
+    assert_eq!(ix::REQUEST_UNDELEGATION, 4);
+    assert_eq!(ix::SET_MACHINE, 5);
+    assert_eq!(ix::GROW_CONFIG, 6);
+    assert_eq!(ix::CLOSE_SPIN, 7);
+    assert_eq!(ix::OPEN_LEDGER, 8);
+    assert_eq!(ix::DELEGATE_TREASURY, 9);
+    assert_eq!(ix::UNDELEGATE_TREASURY, 10);
+    assert_eq!(ix::CLOSE_LEDGER, 11);
+    assert_eq!(ix::AUTHORIZE_TREASURY, 12);
+    assert_eq!(ix::SET_PRIVACY, 13);
+    assert_eq!(ix::WITHDRAW_HOUSE, 14);
+    assert_eq!(ix::REQUEST_BET, 16);
+    assert_eq!(ix::RESOLVE_BET, 17);
+    assert_eq!(ix::REQUEST_REVEAL, 18);
+    assert_eq!(ix::CALLBACK_REVEAL, 19);
+    assert_eq!(ix::HOLD, 20);
+    assert_eq!(ix::GAMBLE, 21);
+    assert_eq!(ix::REQUEST_COLLECT, 22);
+    assert_eq!(ix::RESOLVE_COLLECT, 23);
+}
+
+mod wire {
+    use slots::{Slots, SlotsInstruction};
+
+    fn input(discriminator: u64, arguments: &[u8]) -> Vec<u8> {
+        [&discriminator.to_le_bytes()[..], arguments].concat()
+    }
+
+    #[test]
+    fn the_retired_and_reserved_numbers_reach_nothing() {
+        for unused in [0, 15, 24, 255] {
+            assert!(Slots::instruction(&input(unused, &[])).is_err(), "{unused} was answered");
+        }
+        assert!(Slots::instruction(&[20, 0, 0, 0]).is_err(), "a short tag was answered");
+    }
+
+    #[test]
+    fn the_delegation_program_reaches_undelegate_by_its_own_tag() {
+        // `sha256("global:process_undelegation")[..8]`, fixed by the delegation program.
+        let tag = u64::from_le_bytes([196, 28, 41, 206, 48, 37, 51, 167]);
+        let seeds = borsh::to_vec(&vec![b"house".to_vec()]).unwrap();
+        for discriminator in [3, tag] {
+            let SlotsInstruction::Undelegate(args) =
+                Slots::instruction(&input(discriminator, &seeds)).unwrap()
+            else {
+                panic!("{discriminator} did not reach undelegate");
+            };
+            assert_eq!(args.args.pda_seeds, vec![b"house".to_vec()]);
+        }
+    }
+
+    #[test]
+    fn a_settle_callback_may_carry_bytes_past_its_arguments() {
+        let human = [7u8; 32];
+        let consenter = [9u8; 32];
+        let arguments = [&human[..], &2u64.to_le_bytes(), &consenter[..], &[0xAA; 16]].concat();
+        let SlotsInstruction::ResolveBet(bet) =
+            Slots::instruction(&input(17, &arguments)).unwrap()
+        else {
+            panic!("17 did not reach resolve_bet");
+        };
+        assert_eq!(bet.args.human.to_bytes(), human);
+        assert_eq!(bet.args.machine_id, 2);
+        assert_eq!(bet.args.consenter.to_bytes(), consenter);
+    }
+
+    #[test]
+    fn the_oracle_answer_is_read_as_randomness_then_round() {
+        let arguments = [&[5u8; 32][..], &3u64.to_le_bytes()].concat();
+        let SlotsInstruction::CallbackReveal(reveal) =
+            Slots::instruction(&input(19, &arguments)).unwrap()
+        else {
+            panic!("19 did not reach callback_reveal");
+        };
+        assert_eq!((reveal.args.randomness, reveal.args.round), ([5; 32], 3));
+    }
+
+    #[test]
+    fn a_hold_carries_its_mask() {
+        let SlotsInstruction::Hold(hold) = Slots::instruction(&input(20, &[0b101])).unwrap() else {
+            panic!("20 did not reach hold");
+        };
+        assert_eq!(hold.args.mask, 0b101);
+    }
 }
 
 #[test]

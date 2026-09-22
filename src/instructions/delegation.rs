@@ -1,26 +1,32 @@
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
 use ephemeral_rollups_sdk::cpi::{delegate_account, DelegateAccounts, DelegateConfig, undelegate_account};
 use ephemeral_rollups_sdk::ephem::{FoldableIntentBuilder, MagicIntentBundleBuilder};
 use crate::constants::is_admin;
-use crate::instruction::ProcessInstruction;
 
 /// Delegates a PDA to a rollup validator named by the caller.
 /// Accounts: payer, pda, owner_program, buffer, delegation_record, delegation_metadata, delegation_program, system_program
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct Delegate {
     pub pda_seeds: Vec<Vec<u8>>,
     pub validator: Pubkey,
 }
 
 
-impl ProcessInstruction for Delegate {
-    fn process(&self, _program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [payer, pda, owner_program, buffer, delegation_record, delegation_metadata, delegation_program, system_program, ..] =
-            accounts
-        else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl Delegate {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn process<'a>(
+        &self,
+        payer: &AccountInfo<'a>,
+        pda: &AccountInfo<'a>,
+        owner_program: &AccountInfo<'a>,
+        buffer: &AccountInfo<'a>,
+        delegation_record: &AccountInfo<'a>,
+        delegation_metadata: &AccountInfo<'a>,
+        delegation_program: &AccountInfo<'a>,
+        system_program: &AccountInfo<'a>,
+    ) -> ProgramResult {
 
         // Admin-gated: delegate_account zeroes the PDA's data on handoff, so open access is a griefing vector.
         if !payer.is_signer || !is_admin(payer.key) {
@@ -52,17 +58,22 @@ impl ProcessInstruction for Delegate {
 /// Triggered by the delegation program via its fixed 8-byte discriminator.
 /// Restores account ownership back to this program after the TEE session ends.
 /// Accounts: delegated_pda, buffer, payer, system_program
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct Undelegate {
     pub pda_seeds: Vec<Vec<u8>>,
 }
 
 
-impl ProcessInstruction for Undelegate {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [delegated_pda, buffer, payer, system_program, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl Undelegate {
+    #[inline(always)]
+    pub fn process<'a>(
+        &self,
+        delegated_pda: &AccountInfo<'a>,
+        buffer: &AccountInfo<'a>,
+        payer: &AccountInfo<'a>,
+        system_program: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         undelegate_account(
             delegated_pda,
@@ -78,14 +89,19 @@ impl ProcessInstruction for Undelegate {
 /// Commits and undelegates a single PDA, returning it to L1. The admin is the fee payer, which is
 /// also the only writable identity the rollup grants a non-delegated account.
 /// Accounts: [payer, pda (writable), magic_context (writable), magic_program, fees_vault (writable)]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestUndelegation;
 
-impl ProcessInstruction for RequestUndelegation {
-    fn process(&self, _program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [payer, pda, magic_context, magic_program, fees_vault, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl RequestUndelegation {
+    #[inline(always)]
+    pub fn process<'a>(
+        &self,
+        payer: &AccountInfo<'a>,
+        pda: &AccountInfo<'a>,
+        magic_context: &AccountInfo<'a>,
+        magic_program: &AccountInfo<'a>,
+        fees_vault: &AccountInfo<'a>,
+    ) -> ProgramResult {
         // Admin-gated: otherwise anyone could undelegate the house and halt all settling.
         if !payer.is_signer || !is_admin(payer.key) {
             return Err(ProgramError::MissingRequiredSignature);

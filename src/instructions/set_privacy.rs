@@ -1,14 +1,13 @@
-use borsh::BorshDeserialize;
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError, pubkey::Pubkey};
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError};
 
 use crate::constants::{treasury_seed, is_admin};
-use crate::instruction::ProcessInstruction;
 use crate::utils::{pda, vault};
 
 /// Flips a treasury ledger's privacy. Admin only, home-only (the vault refuses a delegated one).
 /// Accounts: [admin (signer), treasury, ledger, permission, permission_program,
 ///            vault_program, system_program]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct SetPrivacy {
     pub which: u8,
     /// 1 deletes the permission; 0 recreates it with the standard members.
@@ -16,12 +15,20 @@ pub struct SetPrivacy {
 }
 
 
-impl ProcessInstruction for SetPrivacy {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [admin, treasury, ledger, permission, permission_program,
-             vault_program, system_program, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl SetPrivacy {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn process<'a>(
+        &self,
+        admin: &AccountInfo<'a>,
+        treasury: &AccountInfo<'a>,
+        ledger: &AccountInfo<'a>,
+        permission: &AccountInfo<'a>,
+        permission_program: &AccountInfo<'a>,
+        vault_program: &AccountInfo<'a>,
+        system_program: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if !admin.is_signer || !is_admin(admin.key) {
             return Err(ProgramError::MissingRequiredSignature);

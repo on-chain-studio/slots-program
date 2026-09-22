@@ -1,12 +1,11 @@
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use ephemeral_rollups_sdk::access_control::instructions::{CreatePermissionCpiBuilder, UpdatePermissionCpiBuilder};
 use ephemeral_rollups_sdk::access_control::structs::{Member, MembersArgs};
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult, program::{invoke, invoke_signed}};
+use solana_program::{account_info::AccountInfo, program_error::ProgramError, entrypoint::ProgramResult, program::{invoke, invoke_signed}};
 use solana_system_interface::instruction as system_instruction;
 
 use crate::constants::{is_admin, ADMIN_PUBKEYS, PERMISSION_PROGRAM, TREASURIES, VAULT_PROGRAM};
 use crate::error::GameError;
-use crate::instruction::ProcessInstruction;
 use crate::state::analytics::{self, Analytics};
 use crate::state::config::{self, Config, INITIAL_MACHINES};
 use crate::utils::pda;
@@ -20,20 +19,27 @@ use crate::utils::pda;
 /// the settle callbacks that write it run there; its TEE permission names the admins.
 /// Accounts: [initializer, config, house, analytics, permission, permission_program,
 ///            system_program]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct Initialize {
     pub machine_count: u8,
 }
 
-impl ProcessInstruction for Initialize {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [initializer, config_account, treasuries @ ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
-        let [_, _, _, analytics_account, permission, permission_program, system_program, ..] =
-            accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl Initialize {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn process<'a>(
+        &self,
+        initializer: &AccountInfo<'a>,
+        config_account: &AccountInfo<'a>,
+        house: &AccountInfo<'a>,
+        analytics_account: &AccountInfo<'a>,
+        permission: &AccountInfo<'a>,
+        permission_program: &AccountInfo<'a>,
+        system_program: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
+        // One account per `TREASURIES` seed, in order.
+        let treasuries: [&AccountInfo<'a>; TREASURIES.len()] = [house];
 
         if !initializer.is_signer || !is_admin(initializer.key) {
             return Err(ProgramError::MissingRequiredSignature);

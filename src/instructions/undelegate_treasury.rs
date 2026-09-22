@@ -1,24 +1,32 @@
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{account_info::AccountInfo, program_error::ProgramError, entrypoint::ProgramResult};
 
 use crate::constants::{is_admin, treasury_seed};
-use crate::instruction::ProcessInstruction;
 use crate::utils::{pda, vault};
 
 /// Brings a treasury ledger home from its rollup validator (mirror of `DelegateTreasury`). Rollup
 /// only, admin-gated.
 /// Accounts: [admin (signer), treasury, ledger, vault_program, magic_program, magic_context,
 ///            fees_vault]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct UndelegateTreasury {
     pub which: u8,
 }
 
-impl ProcessInstruction for UndelegateTreasury {
-    fn process(&self, program_id: &solana_program::pubkey::Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [admin, treasury, ledger, vault_program, magic_program, magic_context, fees_vault, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl UndelegateTreasury {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn process<'a>(
+        &self,
+        admin: &AccountInfo<'a>,
+        treasury: &AccountInfo<'a>,
+        ledger: &AccountInfo<'a>,
+        vault_program: &AccountInfo<'a>,
+        magic_program: &AccountInfo<'a>,
+        magic_context: &AccountInfo<'a>,
+        fees_vault: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if !admin.is_signer || !is_admin(admin.key) {
             return Err(ProgramError::MissingRequiredSignature);

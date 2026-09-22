@@ -1,10 +1,9 @@
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::Zeroable;
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use solana_program::{account_info::AccountInfo, program_error::ProgramError, entrypoint::ProgramResult};
 
 use crate::constants::is_admin;
 use crate::error::GameError;
-use crate::instruction::ProcessInstruction;
 use crate::state::config::*;
 use crate::utils::pda;
 
@@ -18,7 +17,7 @@ use crate::utils::pda;
 /// absurd. Set above ~65,000 it would stop catching a `u16::MAX` multiplier at all.
 pub const MAX_BET_MULTIPLE: u64 = 10_000;
 
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct InitSymbol {
     pub mult:  u16,
     pub flags: u8,
@@ -27,7 +26,7 @@ pub struct InitSymbol {
 /// Writes one machine of the public shelf: its strips, its lines, its pay table. Admin only.
 /// One machine per transaction.
 /// Accounts: [admin (signer), config]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct SetMachine {
     pub index:          u8,
     pub mode:           u8,
@@ -151,11 +150,14 @@ impl SetMachine {
     }
 }
 
-impl ProcessInstruction for SetMachine {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [admin, config_account, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl SetMachine {
+    #[inline(always)]
+    pub fn process<'a>(
+        &self,
+        admin: &AccountInfo<'a>,
+        config_account: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if !admin.is_signer || !is_admin(admin.key) {
             return Err(ProgramError::MissingRequiredSignature);

@@ -1,8 +1,7 @@
-use borsh::BorshDeserialize;
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{account_info::AccountInfo, program_error::ProgramError, entrypoint::ProgramResult};
 
 use crate::error::GameError;
-use crate::instruction::ProcessInstruction;
 use crate::state::config::MODE_HOLD;
 use crate::state::spin::{Spin, SpinStatus};
 use crate::utils::{engine, pda};
@@ -14,16 +13,19 @@ use crate::utils::{engine, pda};
 /// `RequestReveal` ask for the next seed. No instruction exists that can produce round N+1's
 /// randomness while round N's decision is open.
 /// Accounts: [signer, spin]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct Hold {
     pub mask: u8,
 }
 
-impl ProcessInstruction for Hold {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [signer, spin_account, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl Hold {
+    #[inline(always)]
+    pub fn process<'a>(
+        &self,
+        signer: &AccountInfo<'a>,
+        spin_account: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if !signer.is_signer {
             return Err(ProgramError::MissingRequiredSignature);

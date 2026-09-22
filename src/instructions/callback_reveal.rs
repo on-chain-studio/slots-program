@@ -1,9 +1,8 @@
-use borsh::BorshDeserialize;
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{account_info::AccountInfo, program_error::ProgramError, entrypoint::ProgramResult};
 
 use crate::constants::VRF_PROGRAM_IDENTITY;
 use crate::error::GameError;
-use crate::instruction::ProcessInstruction;
 use crate::state::spin::{Spin, SpinStatus};
 use crate::utils::pda;
 
@@ -11,7 +10,7 @@ use crate::utils::pda;
 /// spin as this round's pending seed. Applying it — turning it into reels, a flip, a payout — is
 /// the round instruction's job, not this one's.
 /// Accounts: [vrf_identity (signer), spin]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct CallbackReveal {
     pub randomness: [u8; 32],
     /// The round this seed was requested for, echoed from the request's callback args. A seed
@@ -21,11 +20,14 @@ pub struct CallbackReveal {
     pub round: u64,
 }
 
-impl ProcessInstruction for CallbackReveal {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [vrf_identity, spin_account, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl CallbackReveal {
+    #[inline(always)]
+    pub fn process<'a>(
+        &self,
+        vrf_identity: &AccountInfo<'a>,
+        spin_account: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if !vrf_identity.is_signer || vrf_identity.key != &VRF_PROGRAM_IDENTITY {
             return Err(ProgramError::MissingRequiredSignature);
