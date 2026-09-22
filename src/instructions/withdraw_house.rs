@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError, pubkey::Pubkey};
+use crate::chain::*;
 
 use crate::constants::is_admin;
 use crate::utils::{pda, vault};
@@ -17,22 +17,22 @@ impl WithdrawHouse {
     #[inline(always)]
     pub fn process<'a>(
         &self,
-        admin: &AccountInfo<'a>,
-        house: &AccountInfo<'a>,
-        house_ledger: &AccountInfo<'a>,
-        admin_ledger: &AccountInfo<'a>,
-        vault_program: &AccountInfo<'a>,
+        admin: &AccountInfo,
+        house: &AccountInfo,
+        house_ledger: &AccountInfo,
+        admin_ledger: &AccountInfo,
+        vault_program: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !admin.is_signer || !is_admin(admin.key) {
+        if !admin.is_signer() || !is_admin(admin.address()) {
             return Err(ProgramError::MissingRequiredSignature);
         }
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
 
         vault::settle(
             vault_program, house_ledger, admin_ledger, house, admin,
-            house.key,
+            house.address(),
             &[b"house", &[house_bump]],
             &self.mint, self.amount,
         )

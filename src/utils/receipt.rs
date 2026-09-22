@@ -1,8 +1,5 @@
 
-use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, instruction::{AccountMeta, Instruction},
-    program::invoke_signed, program_error::ProgramError, pubkey::Pubkey,
-};
+use crate::chain::*;
 
 use crate::constants::VAULT_PROGRAM;
 use crate::error::GameError;
@@ -35,14 +32,14 @@ fn seeds_arg(seeds: &[&[u8]]) -> Vec<u8> {
 /// consent is checked at settle. Seeded and signed by the `consenter`, so it can't be minted for another.
 #[allow(clippy::too_many_arguments)]
 pub fn create<'a>(
-    vault_program: &AccountInfo<'a>,
-    authority: &AccountInfo<'a>,
-    authority_ledger: &AccountInfo<'a>,
-    consenter: &AccountInfo<'a>,
-    receipt: &AccountInfo<'a>,
-    ephemeral_vault: &AccountInfo<'a>,
-    magic_program: &AccountInfo<'a>,
-    magic_context: &AccountInfo<'a>,
+    vault_program: &AccountInfo,
+    authority: &AccountInfo,
+    authority_ledger: &AccountInfo,
+    consenter: &AccountInfo,
+    receipt: &AccountInfo,
+    ephemeral_vault: &AccountInfo,
+    magic_program: &AccountInfo,
+    magic_context: &AccountInfo,
     member_program: &Pubkey,
     authority_seeds: &[&[u8]],
     owners: &[Pubkey],
@@ -74,13 +71,13 @@ pub fn create<'a>(
         &Instruction {
             program_id: VAULT_PROGRAM,
             accounts: vec![
-                AccountMeta::new(*authority.key, true),
-                AccountMeta::new(*authority_ledger.key, false),
-                AccountMeta::new_readonly(*consenter.key, true),
-                AccountMeta::new(*receipt.key, false),
-                AccountMeta::new(*ephemeral_vault.key, false),
-                AccountMeta::new_readonly(*magic_program.key, false),
-                AccountMeta::new(*magic_context.key, false),
+                AccountMeta::new(*authority.address(), true),
+                AccountMeta::new(*authority_ledger.address(), false),
+                AccountMeta::new_readonly(*consenter.address(), true),
+                AccountMeta::new(*receipt.address(), false),
+                AccountMeta::new(*ephemeral_vault.address(), false),
+                AccountMeta::new_readonly(*magic_program.address(), false),
+                AccountMeta::new(*magic_context.address(), false),
             ],
             data,
         },
@@ -95,29 +92,29 @@ pub fn create<'a>(
 
 /// The vault's seedless authority — its signature is what marks a settle callback as genuine.
 pub const VAULT_AUTHORITY: Pubkey =
-    solana_program::pubkey!("341xevm3ejTyZCncco8UdEuiagcBbZQtJnEgsDDYBcgs");
+    Pubkey::from_str_const("341xevm3ejTyZCncco8UdEuiagcBbZQtJnEgsDDYBcgs");
 
 pub fn require_callback(vault_authority: &AccountInfo) -> Result<(), ProgramError> {
-    if !vault_authority.is_signer || vault_authority.key != &VAULT_AUTHORITY {
+    if !vault_authority.is_signer() || vault_authority.address() != &VAULT_AUTHORITY {
         return Err(GameError::NotPaid.into());
     }
     Ok(())
 }
 
 pub fn close<'a>(
-    magic_program: &AccountInfo<'a>,
-    house: &AccountInfo<'a>,
-    receipt: &AccountInfo<'a>,
-    ephemeral_vault: &AccountInfo<'a>,
+    magic_program: &AccountInfo,
+    house: &AccountInfo,
+    receipt: &AccountInfo,
+    ephemeral_vault: &AccountInfo,
     house_bump: u8,
 ) -> ProgramResult {
     invoke_signed(
         &Instruction {
-            program_id: *magic_program.key,
+            program_id: *magic_program.address(),
             accounts: vec![
-                AccountMeta::new(*house.key, true),
-                AccountMeta::new(*receipt.key, false),
-                AccountMeta::new(*ephemeral_vault.key, false),
+                AccountMeta::new(*house.address(), true),
+                AccountMeta::new(*receipt.address(), false),
+                AccountMeta::new(*ephemeral_vault.address(), false),
             ],
             // MagicBlockInstruction::CloseEphemeralAccount = variant 14 (bincode u32 LE)
             data: 14u32.to_le_bytes().to_vec(),

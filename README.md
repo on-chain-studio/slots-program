@@ -1,9 +1,11 @@
 # slots-program
 
 On-chain program for **Slot Machines**, sibling to `../scratch-cards-program` and in its exact
-shape: a native (non-Anchor) program on Solarium's `#[program]` dispatch (`src/lib.rs` is the
-whole wire interface, numbered as it always was), `ephemeral-rollups-sdk` delegation, bytemuck
-state, and hand-rolled CPIs for the vault and the MagicBlock VRF.
+shape: a native (non-Anchor) program on Pinocchio, through Solarium's `#[program]` dispatch (`src/lib.rs` is the
+whole wire interface, numbered as it always was), bytemuck state, and every call to another program written out as
+bytes: `src/chain.rs` is the chain as the program uses it, `src/magicblock.rs` the delegation,
+ephemeral-account and permission calls exactly as `ephemeral-rollups-sdk` 0.14.4 makes them.
+`tests/differential.rs` holds it to the solana-program build it replaced.
 
 Program id: `SLoTSdnmBH5KtNJjhEYw1MeWTKAfRnFfQTTcpgwRn2Q` (`keys/program-keypair.json`) —
 live on devnet, upgrade authority `~/casino_admin.json`. Scripts pick the cluster with

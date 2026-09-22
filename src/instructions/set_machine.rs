@@ -1,6 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::Zeroable;
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, entrypoint::ProgramResult};
+use crate::chain::*;
 
 use crate::constants::is_admin;
 use crate::error::GameError;
@@ -154,12 +154,12 @@ impl SetMachine {
     #[inline(always)]
     pub fn process<'a>(
         &self,
-        admin: &AccountInfo<'a>,
-        config_account: &AccountInfo<'a>,
+        admin: &AccountInfo,
+        config_account: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !admin.is_signer || !is_admin(admin.key) {
+        if !admin.is_signer() || !is_admin(admin.address()) {
             return Err(ProgramError::MissingRequiredSignature);
         }
         pda::validate(program_id, config_account, &[b"config"])?;

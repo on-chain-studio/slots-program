@@ -2,13 +2,7 @@
 //! accounts: it owns the `["house"]` ledger and pays by `settle`. Betting debits the player
 //! (their key must consent); paying out credits the player (house signs alone).
 
-use solana_program::{
-    account_info::AccountInfo,
-    entrypoint::ProgramResult,
-    instruction::{AccountMeta, Instruction},
-    program::invoke_signed,
-    pubkey::Pubkey,
-};
+use crate::chain::*;
 
 use crate::constants::VAULT_PROGRAM;
 
@@ -40,11 +34,11 @@ fn seeds_arg(seeds: &[&[u8]]) -> Vec<u8> {
 const SOL_AMOUNT_AT: usize = 116 + 32;
 
 /// The SOL a ledger holds, read directly so nothing can drift from it.
-pub fn sol_balance(ledger: &AccountInfo) -> Result<u64, solana_program::program_error::ProgramError> {
-    let data = ledger.try_borrow_data()?;
+pub fn sol_balance(ledger: &AccountInfo) -> Result<u64, ProgramError> {
+    let data = ledger.try_borrow()?;
     let bytes = data
         .get(SOL_AMOUNT_AT..SOL_AMOUNT_AT + 8)
-        .ok_or(solana_program::program_error::ProgramError::InvalidAccountData)?;
+        .ok_or(ProgramError::InvalidAccountData)?;
     Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
 }
 
@@ -57,11 +51,11 @@ pub fn ledger(owner: &Pubkey) -> Pubkey {
 /// `program_side`'s meta must set `is_signer`: a PDA signs only via `invoke_signed`, never on arrival.
 #[allow(clippy::too_many_arguments)]
 pub fn settle<'a>(
-    vault_program: &AccountInfo<'a>,
-    src_ledger: &AccountInfo<'a>,
-    dst_ledger: &AccountInfo<'a>,
-    src_authority: &AccountInfo<'a>,
-    dst_authority: &AccountInfo<'a>,
+    vault_program: &AccountInfo,
+    src_ledger: &AccountInfo,
+    dst_ledger: &AccountInfo,
+    src_authority: &AccountInfo,
+    dst_authority: &AccountInfo,
     program_side: &Pubkey,
     signer_seeds: &[&[u8]],
     mint: &Pubkey,
@@ -75,15 +69,15 @@ pub fn settle<'a>(
     let ix = Instruction {
         program_id: VAULT_PROGRAM,
         accounts: vec![
-            AccountMeta::new(*src_ledger.key, false),
-            AccountMeta::new(*dst_ledger.key, false),
+            AccountMeta::new(*src_ledger.address(), false),
+            AccountMeta::new(*dst_ledger.address(), false),
             AccountMeta::new_readonly(
-                *src_authority.key,
-                src_authority.is_signer || src_authority.key == program_side,
+                *src_authority.address(),
+                src_authority.is_signer() || src_authority.address() == program_side,
             ),
             AccountMeta::new_readonly(
-                *dst_authority.key,
-                dst_authority.is_signer || dst_authority.key == program_side,
+                *dst_authority.address(),
+                dst_authority.is_signer() || dst_authority.address() == program_side,
             ),
         ],
         data,
@@ -106,19 +100,19 @@ pub fn settle<'a>(
 /// signs for itself. `min_free`/`slot_increase` size it for every mint the game pays out.
 #[allow(clippy::too_many_arguments)]
 pub fn deposit<'a>(
-    vault_program: &AccountInfo<'a>,
-    house: &AccountInfo<'a>,
-    ledger: &AccountInfo<'a>,
-    permission: &AccountInfo<'a>,
-    permission_program: &AccountInfo<'a>,
-    reserve: &AccountInfo<'a>,
-    reserve_token: &AccountInfo<'a>,
-    house_token: &AccountInfo<'a>,
-    token_program: &AccountInfo<'a>,
-    system_program: &AccountInfo<'a>,
-    sponsor: &AccountInfo<'a>,
-    this_program: &AccountInfo<'a>,
-    this_program_data: &AccountInfo<'a>,
+    vault_program: &AccountInfo,
+    house: &AccountInfo,
+    ledger: &AccountInfo,
+    permission: &AccountInfo,
+    permission_program: &AccountInfo,
+    reserve: &AccountInfo,
+    reserve_token: &AccountInfo,
+    house_token: &AccountInfo,
+    token_program: &AccountInfo,
+    system_program: &AccountInfo,
+    sponsor: &AccountInfo,
+    this_program: &AccountInfo,
+    this_program_data: &AccountInfo,
     house_seeds: &[&[u8]],
     mint: &Pubkey,
     amount: u64,
@@ -137,28 +131,28 @@ pub fn deposit<'a>(
     let ix = Instruction {
         program_id: VAULT_PROGRAM,
         accounts: vec![
-            AccountMeta::new(*house.key, true),
-            AccountMeta::new(*ledger.key, false),
-            AccountMeta::new(*permission.key, false),
-            AccountMeta::new_readonly(*permission_program.key, false),
-            AccountMeta::new(*reserve.key, false),
+            AccountMeta::new(*house.address(), true),
+            AccountMeta::new(*ledger.address(), false),
+            AccountMeta::new(*permission.address(), false),
+            AccountMeta::new_readonly(*permission_program.address(), false),
+            AccountMeta::new(*reserve.address(), false),
             // SOL path: these are System Program placeholders, never writable — mirror the caller's flag.
             AccountMeta {
-                pubkey: *reserve_token.key,
+                pubkey: *reserve_token.address(),
                 is_signer: false,
-                is_writable: reserve_token.is_writable,
+                is_writable: reserve_token.is_writable(),
             },
             AccountMeta {
-                pubkey: *house_token.key,
+                pubkey: *house_token.address(),
                 is_signer: false,
-                is_writable: house_token.is_writable,
+                is_writable: house_token.is_writable(),
             },
-            AccountMeta::new_readonly(*token_program.key, false),
-            AccountMeta::new_readonly(*system_program.key, false),
+            AccountMeta::new_readonly(*token_program.address(), false),
+            AccountMeta::new_readonly(*system_program.address(), false),
             // Funder; the vault requires it to be our upgrade authority.
-            AccountMeta::new(*sponsor.key, true),
-            AccountMeta::new_readonly(*this_program.key, false),
-            AccountMeta::new_readonly(*this_program_data.key, false),
+            AccountMeta::new(*sponsor.address(), true),
+            AccountMeta::new_readonly(*this_program.address(), false),
+            AccountMeta::new_readonly(*this_program_data.address(), false),
         ],
         data,
     };
@@ -178,15 +172,15 @@ pub fn deposit<'a>(
 /// Hands a treasury ledger to a rollup validator — only its owner (this program's PDA) can.
 #[allow(clippy::too_many_arguments)]
 pub fn delegate_ledger<'a>(
-    vault_program: &AccountInfo<'a>,
-    payer: &AccountInfo<'a>,
-    treasury: &AccountInfo<'a>,
-    buffer: &AccountInfo<'a>,
-    delegation_record: &AccountInfo<'a>,
-    delegation_metadata: &AccountInfo<'a>,
-    ledger: &AccountInfo<'a>,
-    delegation_program: &AccountInfo<'a>,
-    system_program: &AccountInfo<'a>,
+    vault_program: &AccountInfo,
+    payer: &AccountInfo,
+    treasury: &AccountInfo,
+    buffer: &AccountInfo,
+    delegation_record: &AccountInfo,
+    delegation_metadata: &AccountInfo,
+    ledger: &AccountInfo,
+    delegation_program: &AccountInfo,
+    system_program: &AccountInfo,
     treasury_seeds: &[&[u8]],
     validator: &Pubkey,
 ) -> ProgramResult {
@@ -199,15 +193,15 @@ pub fn delegate_ledger<'a>(
     let ix = Instruction {
         program_id: VAULT_PROGRAM,
         accounts: vec![
-            AccountMeta::new(*payer.key, true),
-            AccountMeta::new_readonly(*treasury.key, true),
-            AccountMeta::new(*buffer.key, false),
-            AccountMeta::new(*delegation_record.key, false),
-            AccountMeta::new(*delegation_metadata.key, false),
-            AccountMeta::new(*ledger.key, false),
+            AccountMeta::new(*payer.address(), true),
+            AccountMeta::new_readonly(*treasury.address(), true),
+            AccountMeta::new(*buffer.address(), false),
+            AccountMeta::new(*delegation_record.address(), false),
+            AccountMeta::new(*delegation_metadata.address(), false),
+            AccountMeta::new(*ledger.address(), false),
             AccountMeta::new_readonly(VAULT_PROGRAM, false),
-            AccountMeta::new_readonly(*delegation_program.key, false),
-            AccountMeta::new_readonly(*system_program.key, false),
+            AccountMeta::new_readonly(*delegation_program.address(), false),
+            AccountMeta::new_readonly(*system_program.address(), false),
         ],
         data,
     };
@@ -226,25 +220,25 @@ pub fn delegate_ledger<'a>(
 /// Ends a treasury ledger's rollup session. Only the ledger's owner (this program's PDA) may.
 #[allow(clippy::too_many_arguments)]
 pub fn undelegate_ledger<'a>(
-    vault_program: &AccountInfo<'a>,
-    payer: &AccountInfo<'a>,
-    treasury: &AccountInfo<'a>,
-    ledger: &AccountInfo<'a>,
-    magic_program: &AccountInfo<'a>,
-    magic_context: &AccountInfo<'a>,
-    fees_vault: &AccountInfo<'a>,
+    vault_program: &AccountInfo,
+    payer: &AccountInfo,
+    treasury: &AccountInfo,
+    ledger: &AccountInfo,
+    magic_program: &AccountInfo,
+    magic_context: &AccountInfo,
+    fees_vault: &AccountInfo,
     treasury_seeds: &[&[u8]],
 ) -> ProgramResult {
     // Admin pays the commit (the only writable non-delegated identity); treasury signs as owner.
     let ix = Instruction {
         program_id: VAULT_PROGRAM,
         accounts: vec![
-            AccountMeta::new(*payer.key, true),
-            AccountMeta::new_readonly(*treasury.key, true),
-            AccountMeta::new(*ledger.key, false),
-            AccountMeta::new_readonly(*magic_program.key, false),
-            AccountMeta::new(*magic_context.key, false),
-            AccountMeta::new(*fees_vault.key, false),
+            AccountMeta::new(*payer.address(), true),
+            AccountMeta::new_readonly(*treasury.address(), true),
+            AccountMeta::new(*ledger.address(), false),
+            AccountMeta::new_readonly(*magic_program.address(), false),
+            AccountMeta::new(*magic_context.address(), false),
+            AccountMeta::new(*fees_vault.address(), false),
         ],
         data: UNDELEGATE_DISC.to_vec(),
     };
@@ -263,17 +257,17 @@ pub fn undelegate_ledger<'a>(
 /// destination from the signer, so value can only land back on the house.
 #[allow(clippy::too_many_arguments)]
 pub fn withdraw<'a>(
-    vault_program: &AccountInfo<'a>,
-    house: &AccountInfo<'a>,
-    ledger: &AccountInfo<'a>,
-    reserve: &AccountInfo<'a>,
-    reserve_token: &AccountInfo<'a>,
-    house_token: &AccountInfo<'a>,
-    token_program: &AccountInfo<'a>,
-    system_program: &AccountInfo<'a>,
-    receiver: &AccountInfo<'a>,
-    this_program: &AccountInfo<'a>,
-    this_program_data: &AccountInfo<'a>,
+    vault_program: &AccountInfo,
+    house: &AccountInfo,
+    ledger: &AccountInfo,
+    reserve: &AccountInfo,
+    reserve_token: &AccountInfo,
+    house_token: &AccountInfo,
+    token_program: &AccountInfo,
+    system_program: &AccountInfo,
+    receiver: &AccountInfo,
+    this_program: &AccountInfo,
+    this_program_data: &AccountInfo,
     house_seeds: &[&[u8]],
     mint: &Pubkey,
     amount: u64,
@@ -286,26 +280,26 @@ pub fn withdraw<'a>(
     let ix = Instruction {
         program_id: VAULT_PROGRAM,
         accounts: vec![
-            AccountMeta::new(*house.key, true),
-            AccountMeta::new(*ledger.key, false),
-            AccountMeta::new(*reserve.key, false),
+            AccountMeta::new(*house.address(), true),
+            AccountMeta::new(*ledger.address(), false),
+            AccountMeta::new(*reserve.address(), false),
             // placeholders on the SOL path — mirror the caller rather than demand write access
             AccountMeta {
-                pubkey: *reserve_token.key,
+                pubkey: *reserve_token.address(),
                 is_signer: false,
-                is_writable: reserve_token.is_writable,
+                is_writable: reserve_token.is_writable(),
             },
             AccountMeta {
-                pubkey: *house_token.key,
+                pubkey: *house_token.address(),
                 is_signer: false,
-                is_writable: house_token.is_writable,
+                is_writable: house_token.is_writable(),
             },
-            AccountMeta::new_readonly(*token_program.key, false),
-            AccountMeta::new_readonly(*system_program.key, false),
+            AccountMeta::new_readonly(*token_program.address(), false),
+            AccountMeta::new_readonly(*system_program.address(), false),
             // Receiver; must be our upgrade authority. Both sign: the PDA (via seeds) and the authority.
-            AccountMeta::new(*receiver.key, true),
-            AccountMeta::new_readonly(*this_program.key, false),
-            AccountMeta::new_readonly(*this_program_data.key, false),
+            AccountMeta::new(*receiver.address(), true),
+            AccountMeta::new_readonly(*this_program.address(), false),
+            AccountMeta::new_readonly(*this_program_data.address(), false),
         ],
         data,
     };
@@ -328,13 +322,13 @@ pub fn withdraw<'a>(
 #[allow(clippy::too_many_arguments)]
 pub fn set_privacy<'a>(
     program_id: &Pubkey,
-    vault_program: &AccountInfo<'a>,
-    payer: &AccountInfo<'a>,
-    treasury: &AccountInfo<'a>,
-    ledger: &AccountInfo<'a>,
-    permission: &AccountInfo<'a>,
-    permission_program: &AccountInfo<'a>,
-    system_program: &AccountInfo<'a>,
+    vault_program: &AccountInfo,
+    payer: &AccountInfo,
+    treasury: &AccountInfo,
+    ledger: &AccountInfo,
+    permission: &AccountInfo,
+    permission_program: &AccountInfo,
+    system_program: &AccountInfo,
     treasury_seeds: &[&[u8]],
     public: bool,
 ) -> ProgramResult {
@@ -342,11 +336,11 @@ pub fn set_privacy<'a>(
     let (accounts, data) = if public {
         (
             vec![
-                AccountMeta::new_readonly(*treasury.key, true),
-                AccountMeta::new_readonly(*ledger.key, false),
-                AccountMeta::new(*permission.key, false),
-                AccountMeta::new(*payer.key, true),
-                AccountMeta::new_readonly(*permission_program.key, false),
+                AccountMeta::new_readonly(*treasury.address(), true),
+                AccountMeta::new_readonly(*ledger.address(), false),
+                AccountMeta::new(*permission.address(), false),
+                AccountMeta::new(*payer.address(), true),
+                AccountMeta::new_readonly(*permission_program.address(), false),
             ],
             MAKE_PUBLIC_DISC.to_vec(),
         )
@@ -357,12 +351,12 @@ pub fn set_privacy<'a>(
         data.extend_from_slice(&seeds_arg(treasury_seeds));
         (
             vec![
-                AccountMeta::new_readonly(*treasury.key, true),
-                AccountMeta::new(*payer.key, true),
-                AccountMeta::new(*ledger.key, false),
-                AccountMeta::new(*permission.key, false),
-                AccountMeta::new_readonly(*permission_program.key, false),
-                AccountMeta::new_readonly(*system_program.key, false),
+                AccountMeta::new_readonly(*treasury.address(), true),
+                AccountMeta::new(*payer.address(), true),
+                AccountMeta::new(*ledger.address(), false),
+                AccountMeta::new(*permission.address(), false),
+                AccountMeta::new_readonly(*permission_program.address(), false),
+                AccountMeta::new_readonly(*system_program.address(), false),
             ],
             data,
         )
@@ -379,13 +373,13 @@ pub fn set_privacy<'a>(
 
 pub fn open_ledger<'a>(
     program_id: &Pubkey,
-    vault_program: &AccountInfo<'a>,
-    payer: &AccountInfo<'a>,
-    treasury: &AccountInfo<'a>,
-    ledger: &AccountInfo<'a>,
-    permission: &AccountInfo<'a>,
-    permission_program: &AccountInfo<'a>,
-    system_program: &AccountInfo<'a>,
+    vault_program: &AccountInfo,
+    payer: &AccountInfo,
+    treasury: &AccountInfo,
+    ledger: &AccountInfo,
+    permission: &AccountInfo,
+    permission_program: &AccountInfo,
+    system_program: &AccountInfo,
     treasury_seeds: &[&[u8]],
     slots: u16,
 ) -> ProgramResult {
@@ -399,12 +393,12 @@ pub fn open_ledger<'a>(
         &Instruction {
             program_id: VAULT_PROGRAM,
             accounts: vec![
-                AccountMeta::new_readonly(*treasury.key, true),
-                AccountMeta::new(*payer.key, true),
-                AccountMeta::new(*ledger.key, false),
-                AccountMeta::new(*permission.key, false),
-                AccountMeta::new_readonly(*permission_program.key, false),
-                AccountMeta::new_readonly(*system_program.key, false),
+                AccountMeta::new_readonly(*treasury.address(), true),
+                AccountMeta::new(*payer.address(), true),
+                AccountMeta::new(*ledger.address(), false),
+                AccountMeta::new(*permission.address(), false),
+                AccountMeta::new_readonly(*permission_program.address(), false),
+                AccountMeta::new_readonly(*system_program.address(), false),
             ],
             data,
         },
@@ -420,9 +414,9 @@ pub fn open_ledger<'a>(
 /// Temporary — removed with the vault's `authorize_pda_ledger` before mainnet.
 pub fn authorize_ledger<'a>(
     program_id: &Pubkey,
-    vault_program: &AccountInfo<'a>,
-    treasury: &AccountInfo<'a>,
-    ledger: &AccountInfo<'a>,
+    vault_program: &AccountInfo,
+    treasury: &AccountInfo,
+    ledger: &AccountInfo,
     treasury_seeds: &[&[u8]],
 ) -> ProgramResult {
     let mut data = Vec::with_capacity(48);
@@ -434,8 +428,8 @@ pub fn authorize_ledger<'a>(
         &Instruction {
             program_id: VAULT_PROGRAM,
             accounts: vec![
-                AccountMeta::new_readonly(*treasury.key, true),
-                AccountMeta::new(*ledger.key, false),
+                AccountMeta::new_readonly(*treasury.address(), true),
+                AccountMeta::new(*ledger.address(), false),
             ],
             data,
         },
@@ -447,27 +441,27 @@ pub fn authorize_ledger<'a>(
 /// Closes a treasury ledger and its permission, sweeping balances back to the house. `extra` carries
 /// each non-zero mint's `(reserve_token, house_token)` pair, in entry order.
 pub fn close_ledger<'a>(
-    vault_program: &AccountInfo<'a>,
-    rent_payer: &AccountInfo<'a>,
-    house: &AccountInfo<'a>,
-    ledger: &AccountInfo<'a>,
-    reserve: &AccountInfo<'a>,
-    permission: &AccountInfo<'a>,
-    permission_program: &AccountInfo<'a>,
-    token_program: &AccountInfo<'a>,
-    system_program: &AccountInfo<'a>,
-    extra: &[AccountInfo<'a>],
+    vault_program: &AccountInfo,
+    rent_payer: &AccountInfo,
+    house: &AccountInfo,
+    ledger: &AccountInfo,
+    reserve: &AccountInfo,
+    permission: &AccountInfo,
+    permission_program: &AccountInfo,
+    token_program: &AccountInfo,
+    system_program: &AccountInfo,
+    extra: &[AccountInfo],
     house_seeds: &[&[u8]],
 ) -> ProgramResult {
     let mut accounts = vec![
-        AccountMeta::new(*house.key, true),
-        AccountMeta::new(*rent_payer.key, true),
-        AccountMeta::new(*ledger.key, false),
-        AccountMeta::new(*reserve.key, false),
-        AccountMeta::new(*permission.key, false),
-        AccountMeta::new_readonly(*permission_program.key, false),
-        AccountMeta::new_readonly(*token_program.key, false),
-        AccountMeta::new_readonly(*system_program.key, false),
+        AccountMeta::new(*house.address(), true),
+        AccountMeta::new(*rent_payer.address(), true),
+        AccountMeta::new(*ledger.address(), false),
+        AccountMeta::new(*reserve.address(), false),
+        AccountMeta::new(*permission.address(), false),
+        AccountMeta::new_readonly(*permission_program.address(), false),
+        AccountMeta::new_readonly(*token_program.address(), false),
+        AccountMeta::new_readonly(*system_program.address(), false),
     ];
     let mut infos = vec![
         vault_program.clone(), house.clone(), rent_payer.clone(), ledger.clone(),
@@ -475,7 +469,7 @@ pub fn close_ledger<'a>(
         token_program.clone(), system_program.clone(),
     ];
     for a in extra {
-        accounts.push(AccountMeta::new(*a.key, false));
+        accounts.push(AccountMeta::new(*a.address(), false));
         infos.push(a.clone());
     }
 

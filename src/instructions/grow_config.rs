@@ -1,9 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{
-    account_info::AccountInfo, entrypoint::MAX_PERMITTED_DATA_INCREASE,
-    entrypoint::ProgramResult, program::invoke, program_error::ProgramError,
-};
-use solana_system_interface::instruction as system_instruction;
+use crate::chain::*;
 
 use crate::constants::is_admin;
 use crate::state::config::{Config, MACHINE_SIZE};
@@ -21,13 +17,13 @@ impl GrowConfig {
     #[inline(always)]
     pub fn process<'a>(
         &self,
-        admin: &AccountInfo<'a>,
-        config_account: &AccountInfo<'a>,
-        system_program: &AccountInfo<'a>,
+        admin: &AccountInfo,
+        config_account: &AccountInfo,
+        system_program: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !admin.is_signer || !is_admin(admin.key) {
+        if !admin.is_signer() || !is_admin(admin.address()) {
             return Err(ProgramError::MissingRequiredSignature);
         }
         if self.add_machines == 0 {
@@ -47,7 +43,7 @@ impl GrowConfig {
         let held = config_account.lamports();
         if held < required {
             invoke(
-                &system_instruction::transfer(admin.key, config_account.key, required - held),
+                &system_instruction::transfer(admin.address(), config_account.address(), required - held),
                 &[admin.clone(), config_account.clone(), system_program.clone()],
             )?;
         }

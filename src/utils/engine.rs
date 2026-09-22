@@ -4,7 +4,7 @@
 //! is only the cast plus the error mapping. That is deliberate — a hand-written conversion is
 //! exactly where the chain and the client would drift apart.
 
-use solana_program::program_error::ProgramError;
+use crate::chain::*;
 
 use crate::state::config::MachineConfig;
 

@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, entrypoint::ProgramResult};
+use crate::chain::*;
 
 use crate::constants::VRF_PROGRAM_IDENTITY;
 use crate::error::GameError;
@@ -24,12 +24,12 @@ impl CallbackReveal {
     #[inline(always)]
     pub fn process<'a>(
         &self,
-        vrf_identity: &AccountInfo<'a>,
-        spin_account: &AccountInfo<'a>,
+        vrf_identity: &AccountInfo,
+        spin_account: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !vrf_identity.is_signer || vrf_identity.key != &VRF_PROGRAM_IDENTITY {
+        if !vrf_identity.is_signer() || vrf_identity.address() != &VRF_PROGRAM_IDENTITY {
             return Err(ProgramError::MissingRequiredSignature);
         }
 

@@ -7,8 +7,10 @@ use solarium_program::{Account, Remaining, Signer};
 
 use crate::instructions::*;
 
+pub mod chain;
 pub mod constants;
 pub mod error;
+pub mod magicblock;
 
 pub mod instructions {
     pub mod initialize;
@@ -68,8 +70,8 @@ impl Slots {
         args: initialize::Initialize,
     ) -> Result<()> {
         Ok(args.process(
-            initializer.info, config.info, house.info, analytics.info, permission.info,
-            permission_program.info, system_program.info,
+            initializer.info.as_view(), config.info.as_view(), house.info.as_view(), analytics.info.as_view(), permission.info.as_view(),
+            permission_program.info.as_view(), system_program.info.as_view(),
         )?)
     }
 
@@ -87,8 +89,8 @@ impl Slots {
         args: delegation::Delegate,
     ) -> Result<()> {
         Ok(args.process(
-            payer.info, pda.info, owner_program.info, buffer.info, delegation_record.info,
-            delegation_metadata.info, delegation_program.info, system_program.info,
+            payer.info.as_view(), pda.info.as_view(), owner_program.info.as_view(), buffer.info.as_view(), delegation_record.info.as_view(),
+            delegation_metadata.info.as_view(), delegation_program.info.as_view(), system_program.info.as_view(),
         )?)
     }
 
@@ -102,7 +104,7 @@ impl Slots {
         system_program: &Account<'a>,
         args: delegation::Undelegate,
     ) -> Result<()> {
-        Ok(args.process(delegated_pda.info, buffer.info, payer.info, system_program.info)?)
+        Ok(args.process(delegated_pda.info.as_view(), buffer.info.as_view(), payer.info.as_view(), system_program.info.as_view())?)
     }
 
     #[instruction(discriminator = 4)]
@@ -115,7 +117,7 @@ impl Slots {
         fees_vault: &mut Account<'a>,
     ) -> Result<()> {
         Ok(delegation::RequestUndelegation.process(
-            payer.info, pda.info, magic_context.info, magic_program.info, fees_vault.info,
+            payer.info.as_view(), pda.info.as_view(), magic_context.info.as_view(), magic_program.info.as_view(), fees_vault.info.as_view(),
         )?)
     }
 
@@ -126,7 +128,7 @@ impl Slots {
         config: &mut Account<'a>,
         args: set_machine::SetMachine,
     ) -> Result<()> {
-        Ok(args.process(admin.info, config.info)?)
+        Ok(args.process(admin.info.as_view(), config.info.as_view())?)
     }
 
     #[instruction(discriminator = 6)]
@@ -137,7 +139,7 @@ impl Slots {
         system_program: &Account<'a>,
         args: grow_config::GrowConfig,
     ) -> Result<()> {
-        Ok(args.process(admin.info, config.info, system_program.info)?)
+        Ok(args.process(admin.info.as_view(), config.info.as_view(), system_program.info.as_view())?)
     }
 
     #[instruction(discriminator = 7)]
@@ -151,7 +153,7 @@ impl Slots {
         args: close_spin::CloseSpin,
     ) -> Result<()> {
         Ok(args.process(
-            admin.info, house.info, spin.info, ephemeral_vault.info, magic_program.info,
+            admin.info.as_view(), house.info.as_view(), spin.info.as_view(), ephemeral_vault.info.as_view(), magic_program.info.as_view(),
         )?)
     }
 
@@ -168,8 +170,8 @@ impl Slots {
         args: open_ledger::OpenLedger,
     ) -> Result<()> {
         Ok(args.process(
-            admin.info, treasury.info, ledger.info, permission.info, permission_program.info,
-            vault_program.info, system_program.info,
+            admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), permission.info.as_view(), permission_program.info.as_view(),
+            vault_program.info.as_view(), system_program.info.as_view(),
         )?)
     }
 
@@ -188,9 +190,9 @@ impl Slots {
         args: delegate_treasury::DelegateTreasury,
     ) -> Result<()> {
         Ok(args.process(
-            admin.info, treasury.info, buffer.info, delegation_record.info,
-            delegation_metadata.info, ledger.info, vault_program.info, delegation_program.info,
-            system_program.info,
+            admin.info.as_view(), treasury.info.as_view(), buffer.info.as_view(), delegation_record.info.as_view(),
+            delegation_metadata.info.as_view(), ledger.info.as_view(), vault_program.info.as_view(), delegation_program.info.as_view(),
+            system_program.info.as_view(),
         )?)
     }
 
@@ -207,8 +209,8 @@ impl Slots {
         args: undelegate_treasury::UndelegateTreasury,
     ) -> Result<()> {
         Ok(args.process(
-            admin.info, treasury.info, ledger.info, vault_program.info, magic_program.info,
-            magic_context.info, fees_vault.info,
+            admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), vault_program.info.as_view(), magic_program.info.as_view(),
+            magic_context.info.as_view(), fees_vault.info.as_view(),
         )?)
     }
 
@@ -229,9 +231,9 @@ impl Slots {
         args: close_ledger::CloseLedger,
     ) -> Result<()> {
         Ok(args.process(
-            admin.info, treasury.info, ledger.info, reserve.info, permission.info,
-            permission_program.info, vault_program.info, token_program.info, system_program.info,
-            token_accounts,
+            admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), reserve.info.as_view(), permission.info.as_view(),
+            permission_program.info.as_view(), vault_program.info.as_view(), token_program.info.as_view(), system_program.info.as_view(),
+            &token_accounts.iter().map(|account| *account.as_view()).collect::<Vec<_>>(),
         )?)
     }
 
@@ -244,7 +246,7 @@ impl Slots {
         vault_program: &Account<'a>,
         args: authorize_treasury::AuthorizeTreasury,
     ) -> Result<()> {
-        Ok(args.process(admin.info, treasury.info, ledger.info, vault_program.info)?)
+        Ok(args.process(admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), vault_program.info.as_view())?)
     }
 
     #[instruction(discriminator = 13)]
@@ -260,8 +262,8 @@ impl Slots {
         args: set_privacy::SetPrivacy,
     ) -> Result<()> {
         Ok(args.process(
-            admin.info, treasury.info, ledger.info, permission.info, permission_program.info,
-            vault_program.info, system_program.info,
+            admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), permission.info.as_view(), permission_program.info.as_view(),
+            vault_program.info.as_view(), system_program.info.as_view(),
         )?)
     }
 
@@ -276,7 +278,7 @@ impl Slots {
         args: withdraw_house::WithdrawHouse,
     ) -> Result<()> {
         Ok(args.process(
-            admin.info, house.info, house_ledger.info, admin_ledger.info, vault_program.info,
+            admin.info.as_view(), house.info.as_view(), house_ledger.info.as_view(), admin_ledger.info.as_view(), vault_program.info.as_view(),
         )?)
     }
 
@@ -296,8 +298,8 @@ impl Slots {
         args: request_bet::RequestBet,
     ) -> Result<()> {
         Ok(args.process(
-            wallet.info, user.info, config.info, house.info, receipt.info, ephemeral_vault.info,
-            magic_program.info, vault_program.info, house_ledger.info, magic_context.info,
+            wallet.info.as_view(), user.info.as_view(), config.info.as_view(), house.info.as_view(), receipt.info.as_view(), ephemeral_vault.info.as_view(),
+            magic_program.info.as_view(), vault_program.info.as_view(), house_ledger.info.as_view(), magic_context.info.as_view(),
         )?)
     }
 
@@ -316,8 +318,8 @@ impl Slots {
         args: resolve_bet::ResolveBet,
     ) -> Result<()> {
         Ok(args.process(
-            receipt.info, vault_authority.info, config.info, house.info, spin.info,
-            ephemeral_vault.info, magic_program.info, analytics.info,
+            receipt.info.as_view(), vault_authority.info.as_view(), config.info.as_view(), house.info.as_view(), spin.info.as_view(),
+            ephemeral_vault.info.as_view(), magic_program.info.as_view(), analytics.info.as_view(),
         )?)
     }
 
@@ -334,8 +336,8 @@ impl Slots {
         vrf_program: &Account<'a>,
     ) -> Result<()> {
         Ok(request_reveal::RequestReveal.process(
-            user.info, house.info, spin.info, identity.info, oracle_queue.info, slot_hashes.info,
-            system_program.info, vrf_program.info,
+            user.info.as_view(), house.info.as_view(), spin.info.as_view(), identity.info.as_view(), oracle_queue.info.as_view(), slot_hashes.info.as_view(),
+            system_program.info.as_view(), vrf_program.info.as_view(),
         )?)
     }
 
@@ -347,17 +349,17 @@ impl Slots {
         spin: &mut Account<'a>,
         args: callback_reveal::CallbackReveal,
     ) -> Result<()> {
-        Ok(args.process(vrf_identity.info, spin.info)?)
+        Ok(args.process(vrf_identity.info.as_view(), spin.info.as_view())?)
     }
 
     #[instruction(discriminator = 20)]
     pub fn hold<'a>(&self, signer: &Signer<'a>, spin: &mut Account<'a>, args: hold::Hold) -> Result<()> {
-        Ok(args.process(signer.info, spin.info)?)
+        Ok(args.process(signer.info.as_view(), spin.info.as_view())?)
     }
 
     #[instruction(discriminator = 21)]
     pub fn gamble<'a>(&self, signer: &Signer<'a>, spin: &mut Account<'a>) -> Result<()> {
-        Ok(gamble::Gamble.process(signer.info, spin.info)?)
+        Ok(gamble::Gamble.process(signer.info.as_view(), spin.info.as_view())?)
     }
 
     #[instruction(discriminator = 22)]
@@ -375,9 +377,9 @@ impl Slots {
         magic_context: &mut Account<'a>,
     ) -> Result<()> {
         Ok(request_collect::RequestCollect.process(
-            user.info, house.info, spin.info, receipt.info, ephemeral_vault.info,
-            magic_program.info, vault_program.info, wallet.info, house_ledger.info,
-            magic_context.info,
+            user.info.as_view(), house.info.as_view(), spin.info.as_view(), receipt.info.as_view(), ephemeral_vault.info.as_view(),
+            magic_program.info.as_view(), vault_program.info.as_view(), wallet.info.as_view(), house_ledger.info.as_view(),
+            magic_context.info.as_view(),
         )?)
     }
 
@@ -395,8 +397,8 @@ impl Slots {
         args: resolve_collect::ResolveCollect,
     ) -> Result<()> {
         Ok(args.process(
-            receipt.info, vault_authority.info, house.info, spin.info, ephemeral_vault.info,
-            magic_program.info, analytics.info,
+            receipt.info.as_view(), vault_authority.info.as_view(), house.info.as_view(), spin.info.as_view(), ephemeral_vault.info.as_view(),
+            magic_program.info.as_view(), analytics.info.as_view(),
         )?)
     }
 }

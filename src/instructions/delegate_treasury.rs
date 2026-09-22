@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use crate::chain::*;
 
 use crate::constants::{is_admin, treasury_seed};
 use crate::utils::{pda, vault};
@@ -19,19 +19,19 @@ impl DelegateTreasury {
     #[allow(clippy::too_many_arguments)]
     pub fn process<'a>(
         &self,
-        admin: &AccountInfo<'a>,
-        treasury: &AccountInfo<'a>,
-        buffer: &AccountInfo<'a>,
-        delegation_record: &AccountInfo<'a>,
-        delegation_metadata: &AccountInfo<'a>,
-        ledger: &AccountInfo<'a>,
-        vault_program: &AccountInfo<'a>,
-        delegation_program: &AccountInfo<'a>,
-        system_program: &AccountInfo<'a>,
+        admin: &AccountInfo,
+        treasury: &AccountInfo,
+        buffer: &AccountInfo,
+        delegation_record: &AccountInfo,
+        delegation_metadata: &AccountInfo,
+        ledger: &AccountInfo,
+        vault_program: &AccountInfo,
+        delegation_program: &AccountInfo,
+        system_program: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !admin.is_signer || !is_admin(admin.key) {
+        if !admin.is_signer() || !is_admin(admin.address()) {
             return Err(ProgramError::MissingRequiredSignature);
         }
         let seed = treasury_seed(self.which)?;

@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use crate::chain::*;
 
 use crate::error::GameError;
 use crate::state::Config;
@@ -20,28 +20,28 @@ impl RequestBet {
     #[allow(clippy::too_many_arguments)]
     pub fn process<'a>(
         &self,
-        wallet: &AccountInfo<'a>,
-        user: &AccountInfo<'a>,
-        config_account: &AccountInfo<'a>,
-        house: &AccountInfo<'a>,
-        receipt_account: &AccountInfo<'a>,
-        ephemeral_vault: &AccountInfo<'a>,
-        magic_program: &AccountInfo<'a>,
-        vault_program: &AccountInfo<'a>,
-        house_ledger: &AccountInfo<'a>,
-        magic_context: &AccountInfo<'a>,
+        wallet: &AccountInfo,
+        user: &AccountInfo,
+        config_account: &AccountInfo,
+        house: &AccountInfo,
+        receipt_account: &AccountInfo,
+        ephemeral_vault: &AccountInfo,
+        magic_program: &AccountInfo,
+        vault_program: &AccountInfo,
+        house_ledger: &AccountInfo,
+        magic_context: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !wallet.is_signer {
+        if !wallet.is_signer() {
             return Err(ProgramError::MissingRequiredSignature);
         }
         pda::validate(program_id, config_account, &[b"config"])?;
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
-        if *house_ledger.key != vault::ledger(house.key) {
+        if *house_ledger.address() != vault::ledger(house.address()) {
             return Err(GameError::InvalidPDA.into());
         }
-        if *receipt_account.key != receipt::address(wallet.key) {
+        if *receipt_account.address() != receipt::address(wallet.address()) {
             return Err(GameError::InvalidPDA.into());
         }
 
@@ -57,14 +57,14 @@ impl RequestBet {
         // about to prove this key may act for the user, and the round decisions reuse that proof.
         let mut args = Vec::with_capacity(8 + 32);
         args.extend_from_slice(&self.machine_id.to_le_bytes());
-        args.extend_from_slice(wallet.key.as_ref());
+        args.extend_from_slice(wallet.address().as_ref());
 
         receipt::create(
             vault_program, house, house_ledger, wallet, receipt_account, ephemeral_vault,
             magic_program, magic_context,
             program_id,
             &[b"house", &[house_bump]],
-            &[*user.key, *house.key],
+            &[*user.address(), *house.address()],
             crate::SlotsInstruction::RESOLVE_BET,
             &args,
             &movements,

@@ -1,6 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use ephemeral_rollups_sdk::consts::EPHEMERAL_VAULT_ID;
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use crate::magicblock::EPHEMERAL_VAULT_ID;
+use crate::chain::*;
 
 use crate::constants::is_admin;
 use crate::error::GameError;
@@ -18,18 +18,18 @@ impl CloseSpin {
     #[inline(always)]
     pub fn process<'a>(
         &self,
-        admin: &AccountInfo<'a>,
-        house: &AccountInfo<'a>,
-        spin_account: &AccountInfo<'a>,
-        ephemeral_vault: &AccountInfo<'a>,
-        magic_program: &AccountInfo<'a>,
+        admin: &AccountInfo,
+        house: &AccountInfo,
+        spin_account: &AccountInfo,
+        ephemeral_vault: &AccountInfo,
+        magic_program: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !admin.is_signer || !is_admin(admin.key) {
+        if !admin.is_signer() || !is_admin(admin.address()) {
             return Err(ProgramError::MissingRequiredSignature);
         }
-        if *ephemeral_vault.key != EPHEMERAL_VAULT_ID {
+        if *ephemeral_vault.address() != EPHEMERAL_VAULT_ID {
             return Err(GameError::InvalidPDA.into());
         }
         let house_bump = pda::validate(program_id, house, &[b"house"])?;

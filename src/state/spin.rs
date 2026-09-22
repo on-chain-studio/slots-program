@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError};
+use crate::chain::*;
 
 use crate::state::config::{MachineConfig, MAX_REELS};
 
@@ -68,8 +68,8 @@ impl Spin {
 
     /// Read-only, for the paths that must not write — `request_collect` reads a spin it is
     /// deliberately forbidden to mark, since requesting a payout is permissionless.
-    pub fn load<'a>(account: &AccountInfo<'a>) -> Result<&'a Self, ProgramError> {
-        let data = account.try_borrow_data()?;
+    pub fn load<'a>(account: &AccountInfo) -> Result<&'a Self, ProgramError> {
+        let data = account.try_borrow()?;
         if data.len() < Self::SIZE { return Err(ProgramError::InvalidAccountData); }
         let s = bytemuck::try_from_bytes::<Self>(&data[..Self::SIZE])
             .map_err(|_| ProgramError::InvalidAccountData)
@@ -78,7 +78,7 @@ impl Spin {
         Ok(s)
     }
 
-    pub fn load_mut<'a>(account: &AccountInfo<'a>) -> Result<&'a mut Self, ProgramError> {
+    pub fn load_mut<'a>(account: &AccountInfo) -> Result<&'a mut Self, ProgramError> {
         let mut data = account.try_borrow_mut_data()?;
         if data.len() < Self::SIZE { return Err(ProgramError::InvalidAccountData); }
         let s = bytemuck::try_from_bytes_mut::<Self>(&mut data[..Self::SIZE])
@@ -91,11 +91,11 @@ impl Spin {
     }
 
     /// The terms this bet was placed under.
-    pub fn terms<'a>(account: &AccountInfo<'a>) -> Result<&'a MachineConfig, ProgramError> {
+    pub fn terms<'a>(account: &AccountInfo) -> Result<&'a MachineConfig, ProgramError> {
         if account.data_len() < Self::WITH_TERMS {
             return Err(ProgramError::AccountDataTooSmall);
         }
-        let data = account.try_borrow_data()?;
+        let data = account.try_borrow()?;
         bytemuck::try_from_bytes::<MachineConfig>(&data[Self::SIZE..Self::WITH_TERMS])
             .map_err(|_| ProgramError::InvalidAccountData)
             .map(|r| unsafe { &*(r as *const MachineConfig) })

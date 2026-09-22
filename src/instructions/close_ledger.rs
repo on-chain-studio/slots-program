@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError};
+use crate::chain::*;
 
 use crate::constants::{is_admin, treasury_seed};
 use crate::utils::{pda, vault};
@@ -18,20 +18,20 @@ impl CloseLedger {
     #[allow(clippy::too_many_arguments)]
     pub fn process<'a>(
         &self,
-        admin: &AccountInfo<'a>,
-        treasury: &AccountInfo<'a>,
-        ledger: &AccountInfo<'a>,
-        reserve: &AccountInfo<'a>,
-        permission: &AccountInfo<'a>,
-        permission_program: &AccountInfo<'a>,
-        vault_program: &AccountInfo<'a>,
-        token_program: &AccountInfo<'a>,
-        system_program: &AccountInfo<'a>,
-        extra: &[AccountInfo<'a>],
+        admin: &AccountInfo,
+        treasury: &AccountInfo,
+        ledger: &AccountInfo,
+        reserve: &AccountInfo,
+        permission: &AccountInfo,
+        permission_program: &AccountInfo,
+        vault_program: &AccountInfo,
+        token_program: &AccountInfo,
+        system_program: &AccountInfo,
+        extra: &[AccountInfo],
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !admin.is_signer || !is_admin(admin.key) {
+        if !admin.is_signer() || !is_admin(admin.address()) {
             return Err(ProgramError::MissingRequiredSignature);
         }
 

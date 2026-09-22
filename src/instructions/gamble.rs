@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, entrypoint::ProgramResult};
+use crate::chain::*;
 
 use crate::error::GameError;
 use crate::state::config::MODE_GAMBLE;
@@ -21,19 +21,19 @@ impl Gamble {
     #[inline(always)]
     pub fn process<'a>(
         &self,
-        signer: &AccountInfo<'a>,
-        spin_account: &AccountInfo<'a>,
+        signer: &AccountInfo,
+        spin_account: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !signer.is_signer {
+        if !signer.is_signer() {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
         let terms = *Spin::terms(spin_account)?;
         let spin = Spin::load_mut(spin_account)?;
 
-        let key = signer.key.to_bytes();
+        let key = signer.address().to_bytes();
         if key != spin.user && key != spin.consenter {
             return Err(GameError::Unauthorized.into());
         }

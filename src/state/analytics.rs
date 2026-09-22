@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use solana_program::{account_info::AccountInfo, program_error::ProgramError};
+use crate::chain::*;
 
 pub const DISCRIMINATOR: u64 = 4;
 pub const VERSION:       u64 = 1;
@@ -37,7 +37,7 @@ pub struct Analytics {
 impl Analytics {
     pub const SIZE: usize = size_of::<Self>();
 
-    pub fn load_mut<'a>(account: &AccountInfo<'a>) -> Result<&'a mut Self, ProgramError> {
+    pub fn load_mut<'a>(account: &AccountInfo) -> Result<&'a mut Self, ProgramError> {
         let mut data = account.try_borrow_mut_data()?;
         if data.len() < Self::SIZE { return Err(ProgramError::InvalidAccountData); }
         let s = bytemuck::try_from_bytes_mut::<Self>(&mut data[..Self::SIZE])

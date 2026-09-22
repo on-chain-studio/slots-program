@@ -1,7 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
-use ephemeral_rollups_sdk::cpi::{delegate_account, DelegateAccounts, DelegateConfig, undelegate_account};
-use ephemeral_rollups_sdk::ephem::{FoldableIntentBuilder, MagicIntentBundleBuilder};
+use crate::chain::*;
+use crate::magicblock::{commit_and_undelegate, delegate_account, undelegate_account};
 use crate::constants::is_admin;
 
 /// Delegates a PDA to a rollup validator named by the caller.
@@ -18,39 +17,35 @@ impl Delegate {
     #[allow(clippy::too_many_arguments)]
     pub fn process<'a>(
         &self,
-        payer: &AccountInfo<'a>,
-        pda: &AccountInfo<'a>,
-        owner_program: &AccountInfo<'a>,
-        buffer: &AccountInfo<'a>,
-        delegation_record: &AccountInfo<'a>,
-        delegation_metadata: &AccountInfo<'a>,
-        delegation_program: &AccountInfo<'a>,
-        system_program: &AccountInfo<'a>,
+        payer: &AccountInfo,
+        pda: &AccountInfo,
+        owner_program: &AccountInfo,
+        buffer: &AccountInfo,
+        delegation_record: &AccountInfo,
+        delegation_metadata: &AccountInfo,
+        delegation_program: &AccountInfo,
+        system_program: &AccountInfo,
     ) -> ProgramResult {
 
         // Admin-gated: delegate_account zeroes the PDA's data on handoff, so open access is a griefing vector.
-        if !payer.is_signer || !is_admin(payer.key) {
+        if !payer.is_signer() || !is_admin(payer.address()) {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
         let seeds: Vec<&[u8]> = self.pda_seeds.iter().map(|v| v.as_slice()).collect();
 
         delegate_account(
-            DelegateAccounts {
-                payer,
-                pda,
-                owner_program,
-                buffer,
-                delegation_record,
-                delegation_metadata,
-                delegation_program,
-                system_program,
-            },
+            payer,
+            pda,
+            owner_program,
+            buffer,
+            delegation_record,
+            delegation_metadata,
+            delegation_program,
+            system_program,
             &seeds,
-            DelegateConfig {
-                commit_frequency_ms: 0,
-                validator: Some(self.validator),
-            },
+            0,
+            Some(self.validator),
         )
     }
 }
@@ -68,10 +63,10 @@ impl Undelegate {
     #[inline(always)]
     pub fn process<'a>(
         &self,
-        delegated_pda: &AccountInfo<'a>,
-        buffer: &AccountInfo<'a>,
-        payer: &AccountInfo<'a>,
-        system_program: &AccountInfo<'a>,
+        delegated_pda: &AccountInfo,
+        buffer: &AccountInfo,
+        payer: &AccountInfo,
+        system_program: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
@@ -81,7 +76,7 @@ impl Undelegate {
             buffer,
             payer,
             system_program,
-            self.pda_seeds.clone(),
+            &self.pda_seeds,
         )
     }
 }
@@ -96,19 +91,16 @@ impl RequestUndelegation {
     #[inline(always)]
     pub fn process<'a>(
         &self,
-        payer: &AccountInfo<'a>,
-        pda: &AccountInfo<'a>,
-        magic_context: &AccountInfo<'a>,
-        magic_program: &AccountInfo<'a>,
-        fees_vault: &AccountInfo<'a>,
+        payer: &AccountInfo,
+        pda: &AccountInfo,
+        magic_context: &AccountInfo,
+        magic_program: &AccountInfo,
+        fees_vault: &AccountInfo,
     ) -> ProgramResult {
         // Admin-gated: otherwise anyone could undelegate the house and halt all settling.
-        if !payer.is_signer || !is_admin(payer.key) {
+        if !payer.is_signer() || !is_admin(payer.address()) {
             return Err(ProgramError::MissingRequiredSignature);
         }
-        MagicIntentBundleBuilder::new(payer.clone(), magic_context.clone(), magic_program.clone())
-            .magic_fee_vault(fees_vault.clone())
-            .commit_and_undelegate(&[pda.clone()])
-            .build_and_invoke()
+        commit_and_undelegate(payer, magic_context, magic_program, Some(fees_vault), &[*pda])
     }
 }

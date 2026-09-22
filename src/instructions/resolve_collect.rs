@@ -1,6 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use ephemeral_rollups_sdk::consts::EPHEMERAL_VAULT_ID;
-use solana_program::{account_info::AccountInfo, pubkey::Pubkey, entrypoint::ProgramResult};
+use crate::magicblock::EPHEMERAL_VAULT_ID;
+use crate::chain::*;
 
 use crate::error::GameError;
 use crate::instructions::request_collect::payout;
@@ -21,17 +21,17 @@ impl ResolveCollect {
     #[allow(clippy::too_many_arguments)]
     pub fn process<'a>(
         &self,
-        _receipt_account: &AccountInfo<'a>,
-        vault_authority: &AccountInfo<'a>,
-        house: &AccountInfo<'a>,
-        spin_account: &AccountInfo<'a>,
-        ephemeral_vault: &AccountInfo<'a>,
-        magic_program: &AccountInfo<'a>,
-        analytics_account: &AccountInfo<'a>,
+        _receipt_account: &AccountInfo,
+        vault_authority: &AccountInfo,
+        house: &AccountInfo,
+        spin_account: &AccountInfo,
+        ephemeral_vault: &AccountInfo,
+        magic_program: &AccountInfo,
+        analytics_account: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if *ephemeral_vault.key != EPHEMERAL_VAULT_ID {
+        if *ephemeral_vault.address() != EPHEMERAL_VAULT_ID {
             return Err(GameError::InvalidPDA.into());
         }
         let house_bump = pda::validate(program_id, house, &[b"house"])?;

@@ -1,11 +1,5 @@
 use borsh::BorshSerialize;
-use solana_program::{
-    account_info::AccountInfo,
-    entrypoint::ProgramResult,
-    instruction::{AccountMeta, Instruction},
-    program::invoke_signed,
-    pubkey::Pubkey,
-};
+use crate::chain::*;
 
 use crate::constants::VRF_PROGRAM;
 
@@ -39,13 +33,13 @@ pub struct SerializableAccountMeta {
 #[allow(clippy::too_many_arguments)]
 pub fn request_randomness<'a>(
     program_id: &Pubkey,
-    payer: &AccountInfo<'a>,
-    identity: &AccountInfo<'a>,
+    payer: &AccountInfo,
+    identity: &AccountInfo,
     identity_bump: u8,
-    oracle_queue: &AccountInfo<'a>,
-    system_program: &AccountInfo<'a>,
-    slot_hashes: &AccountInfo<'a>,
-    vrf_program: &AccountInfo<'a>,
+    oracle_queue: &AccountInfo,
+    system_program: &AccountInfo,
+    slot_hashes: &AccountInfo,
+    vrf_program: &AccountInfo,
     caller_seed: [u8; 32],
     callback_discriminator: [u8; 8],
     callback_accounts: Vec<SerializableAccountMeta>,
@@ -65,17 +59,17 @@ pub fn request_randomness<'a>(
     };
     // 8-byte VRF instruction discriminator: 3 = ephemeral queue, 8 = regular queue
     let mut data = vec![if ephemeral { 3u8 } else { 8u8 }, 0, 0, 0, 0, 0, 0, 0];
-    payload.serialize(&mut data).map_err(|_| solana_program::program_error::ProgramError::InvalidInstructionData)?;
+    payload.serialize(&mut data).map_err(|_| ProgramError::InvalidInstructionData)?;
 
     invoke_signed(
         &Instruction {
             program_id: VRF_PROGRAM,
             accounts: vec![
-                AccountMeta::new(*payer.key, true),
-                AccountMeta::new_readonly(*identity.key, true),
-                AccountMeta::new(*oracle_queue.key, false),
-                AccountMeta::new_readonly(*system_program.key, false),
-                AccountMeta::new_readonly(*slot_hashes.key, false),
+                AccountMeta::new(*payer.address(), true),
+                AccountMeta::new_readonly(*identity.address(), true),
+                AccountMeta::new(*oracle_queue.address(), false),
+                AccountMeta::new_readonly(*system_program.address(), false),
+                AccountMeta::new_readonly(*slot_hashes.address(), false),
             ],
             data,
         },

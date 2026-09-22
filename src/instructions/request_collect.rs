@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use crate::chain::*;
 
 use crate::error::GameError;
 use crate::state::config::{MODE_GAMBLE, MODE_HOLD};
@@ -48,43 +48,43 @@ impl RequestCollect {
     #[allow(clippy::too_many_arguments)]
     pub fn process<'a>(
         &self,
-        user: &AccountInfo<'a>,
-        house: &AccountInfo<'a>,
-        spin_account: &AccountInfo<'a>,
-        receipt_account: &AccountInfo<'a>,
-        ephemeral_vault: &AccountInfo<'a>,
-        magic_program: &AccountInfo<'a>,
-        vault_program: &AccountInfo<'a>,
-        wallet: &AccountInfo<'a>,
-        house_ledger: &AccountInfo<'a>,
-        magic_context: &AccountInfo<'a>,
+        user: &AccountInfo,
+        house: &AccountInfo,
+        spin_account: &AccountInfo,
+        receipt_account: &AccountInfo,
+        ephemeral_vault: &AccountInfo,
+        magic_program: &AccountInfo,
+        vault_program: &AccountInfo,
+        wallet: &AccountInfo,
+        house_ledger: &AccountInfo,
+        magic_context: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
         // A win may open a new token slot on the player's ledger; the vault needs the owner's
         // consent, which is the session key signing here.
-        if !wallet.is_signer {
+        if !wallet.is_signer() {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
-        if *house_ledger.key != vault::ledger(house.key) {
+        if *house_ledger.address() != vault::ledger(house.address()) {
             return Err(GameError::InvalidPDA.into());
         }
-        if *receipt_account.key != receipt::address(wallet.key) {
+        if *receipt_account.address() != receipt::address(wallet.address()) {
             return Err(GameError::InvalidPDA.into());
         }
 
         let terms = *Spin::terms(spin_account)?;
         let amount = {
             let spin = Spin::load(spin_account)?;
-            if spin.user != user.key.to_bytes() {
+            if spin.user != user.address().to_bytes() {
                 return Err(GameError::Unauthorized.into());
             }
             if spin.status != SpinStatus::Rolled as u64 {
                 return Err(GameError::NotRolled.into());
             }
-            pda::validate(program_id, spin_account, &[b"spin", user.key.as_ref()])?;
+            pda::validate(program_id, spin_account, &[b"spin", user.address().as_ref()])?;
             let amount = payout(spin, &terms)?;
             // While a round decision is still open — a hold respin, or a gamble win that can
             // ride further — only the consenter may collect. Otherwise a stranger could
@@ -96,7 +96,7 @@ impl RequestCollect {
                 MODE_GAMBLE => amount > 0 && spin.round < terms.gamble_rungs as u64,
                 _ => false,
             };
-            if deciding && wallet.key.to_bytes() != spin.consenter {
+            if deciding && wallet.address().to_bytes() != spin.consenter {
                 return Err(GameError::Unauthorized.into());
             }
             amount
@@ -119,7 +119,7 @@ impl RequestCollect {
             magic_program, magic_context,
             program_id,
             &[b"house", &[house_bump]],
-            &[*user.key, *house.key],
+            &[*user.address(), *house.address()],
             crate::SlotsInstruction::RESOLVE_COLLECT,
             &[],
             &movements,
