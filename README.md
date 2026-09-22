@@ -81,6 +81,8 @@ enumerator and writes `scripts/machines.json`. Republishing is `set-machines.mjs
 ```
 cargo build-sbf                      # target/deploy/slots.so
 cargo test                           # program: layout + wire pins, SetMachine validation
+scripts/parity.sh                    # the built .so against the deployed one: every instruction
+                                     # and mutation, byte for byte (tests/differential.rs)
 SBF_OUT_DIR=$PWD/target/deploy cargo test --test program -- --ignored
                                      # the built .so run in Mollusk: dispatch, refusals, hold, VRF
 (cd engine && cargo test --release)  # engine: determinism, RTP enumeration, hold DP, parity

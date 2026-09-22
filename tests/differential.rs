@@ -12,8 +12,10 @@
 //! Each case runs as written and then mutated: each signer unsigned, the account list cut short,
 //! each account swapped for a stranger, the arguments cut short, corrupted and padded.
 //!
-//!     BASELINE_SO=<original .so> CANDIDATE_SO=target/deploy/slots.so \
-//!         cargo test --test differential -- --ignored --nocapture
+//!     scripts/parity.sh
+//!
+//! which builds the program and runs this against `tests/fixtures/baseline.so`, the deployed build
+//! (see `tests/fixtures/README.md`). `BASELINE_SO` and `CANDIDATE_SO` name other builds to compare.
 //!
 //! Instruction data is written here as bytes, not through either build's types: it is the wire
 //! format both have to honour.
@@ -125,9 +127,9 @@ struct Build {
 }
 
 impl Build {
-    fn load(variable: &str) -> Self {
+    fn load(variable: &str, default: &str) -> Self {
         let path = std::env::var(variable)
-            .unwrap_or_else(|_| panic!("{variable} must name the .so to test"));
+            .unwrap_or_else(|_| format!("{}/{default}", env!("CARGO_MANIFEST_DIR")));
         let elf = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
         let mut mollusk = Mollusk::default();
         mollusk.add_program_with_elf_and_loader(&PROGRAM, &elf, &LOADER_V2);
@@ -823,10 +825,10 @@ fn variants(case: &Case) -> Vec<(String, Instruction)> {
 }
 
 #[test]
-#[ignore = "needs BASELINE_SO and CANDIDATE_SO"]
+#[ignore = "needs cargo build-sbf; run scripts/parity.sh"]
 fn both_builds_do_exactly_the_same() {
-    let mut baseline = Build::load("BASELINE_SO");
-    let mut candidate = Build::load("CANDIDATE_SO");
+    let mut baseline = Build::load("BASELINE_SO", "tests/fixtures/baseline.so");
+    let mut candidate = Build::load("CANDIDATE_SO", "target/deploy/slots.so");
     let base = world(&mut baseline);
     baseline.compute_units = 0;
     let cases = cases(&base);
@@ -870,7 +872,9 @@ fn both_builds_do_exactly_the_same() {
         "compute units: baseline {}, candidate {}",
         baseline.compute_units, candidate.compute_units
     );
-    for difference in differences.iter().take(5) {
+    // DIFF_ALL prints every difference rather than the first few.
+    let shown = if std::env::var("DIFF_ALL").is_ok() { usize::MAX } else { 5 };
+    for difference in differences.iter().take(shown) {
         println!("\n{difference}");
     }
     assert!(differences.is_empty(), "{} runs differ", differences.len());
