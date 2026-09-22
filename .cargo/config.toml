@@ -1,0 +1,7 @@
+# `cargo build-sbf` points CC at the SBF toolchain's clang for every crate, including the
+# proc-macro side that compiles for the host. Solarium's macro crate pulls blake3, whose C build
+# then fails on macOS for want of the system headers; the host target gets the system compiler.
+# Mollusk's tests load the program from here.
+[env]
+CC_aarch64_apple_darwin = "/usr/bin/clang"
+SBF_OUT_DIR = { value = "target/deploy", relative = true }
