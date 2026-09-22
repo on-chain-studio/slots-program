@@ -23,8 +23,10 @@ export const SLOT_HASHES = new PublicKey('SysvarS1otHashes1111111111111111111111
 export const SOL_MINT = new PublicKey('11111111111111111111111111111111');
 export const SYSTEM = SystemProgram.programId;
 
-/** The public ER's validator identity — same on both clusters. The TEE is MTEWGuqx…. */
-export const ER_VALIDATOR = new PublicKey('MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57');
+/** The TEE's validator identity — the private rollup every spin lives on; same on both clusters. */
+export const ER_VALIDATOR = new PublicKey('MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo');
+/** The public ER's identity — only named so a ledger left there can be recognised and reclaimed. */
+export const PUBLIC_ER_VALIDATOR = new PublicKey('MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57');
 
 export const admin = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(ADMIN_PATH))));
 

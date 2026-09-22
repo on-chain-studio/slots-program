@@ -14,13 +14,17 @@
 
 use slots_engine::{analysis, Line, MachineConfig, Symbol, MAX_LINES, MODE_HOLD, MODE_LINES};
 
+/// The house standard for a machine with no decisions. The hold machine sets its own two
+/// figures (see its Goal): what it returns to a player who never holds, and what it returns
+/// to one who holds well.
 const TARGET_RTP: f64 = 0.90;
 /// The layout's cap, used in full: 32 stops per dial is a /32768 lattice over three reels —
 /// the granularity that lets fixed clean prizes land on 90.00 without integer strain.
 const STRIP: usize = 32;
 const REELS: usize = 3;
-/// Six paying symbols and the x1 floor — a line of the commonest hands the bet back, which is
-/// what buys the hit rate a x2 floor cannot afford.
+/// Seven paying symbols, the commonest at x2: every win nets something. A x1 floor bought a
+/// higher hit rate by handing the bet back, and it read as a machine that never pays — most of
+/// the return sat in that one symbol while anything above x5 came once in hundreds of spins.
 const SYMS: usize = 7;
 
 /// Deterministic pseudo-random stream for placement and search moves — reruns give the same shelf.
@@ -81,6 +85,16 @@ fn has_run(strip: &[u8; STRIP]) -> bool {
     })
 }
 
+/// Grids per bet on the hold machine — `rounds - 1` respins. Overridable while exploring, since
+/// the number of respins is what decides how much holding is worth over never holding.
+fn hold_rounds() -> u8 {
+    std::env::var("SLOTS_HOLD_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(3)
+}
+
+fn env_f64(name: &str, default: f64) -> f64 {
+    std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
 fn machine(counts: &[[usize; SYMS]; REELS], rots: &[usize; REELS], mults: &[u16; SYMS], mode: u8) -> MachineConfig {
     let mut lines = [Line::default(); MAX_LINES];
     for (i, rows) in [[1, 1, 1], [0, 0, 0], [2, 2, 2], [0, 1, 2], [2, 1, 0]].iter().enumerate() {
@@ -94,7 +108,7 @@ fn machine(counts: &[[usize; SYMS]; REELS], rots: &[usize; REELS], mults: &[u16;
         row_count: 3,
         symbol_count: SYMS as u8,
         line_count: 5,
-        rounds: if mode == MODE_HOLD { 3 } else { 1 },
+        rounds: if mode == MODE_HOLD { hold_rounds() } else { 1 },
         lines,
         ..Default::default()
     };
@@ -121,6 +135,13 @@ struct Goal {
     /// and hit rate in a very common floor symbol — capping that step chokes it below any
     /// reachable RTP target — so only a machine that can afford a bounded floor sets one.
     floor_cap: f64,
+    /// The return under the mode's own play — optimal holds, for hold.
+    rtp: f64,
+    /// Hold only: the return for the default player, who holds the obvious way — two reels
+    /// agree, spin the third (`analysis::naive_mask`). "Optimal play" means nothing to most
+    /// players, so the machine has to be honest at the default too — the base pays a real
+    /// return, and holding well lifts it to `rtp`.
+    base_rtp: Option<f64>,
 }
 
 const LINES: u16 = 5;
@@ -167,7 +188,21 @@ fn score(g: &Goal, counts: &[[usize; SYMS]; REELS], rots: &[usize; REELS], mults
     let r = analysis::report(&machine(counts, rots, mults, g.mode)).ok()?;
     // Weighted so even a fraction-of-a-percent shape violation outranks any reachable RTP
     // improvement — the fence bends during the walk but never in the answer.
-    let mut s = (r.rtp - TARGET_RTP).abs() * 200.0 + shape * 2000.0;
+    let mut s = shape * 2000.0;
+    if let Some(base) = g.base_rtp {
+        // Two figures, weighted by which one is being anchored (env, while exploring). The
+        // ceiling is a cliff rather than a wall: a search that rejected every over-paying
+        // machine outright had nowhere to step from its start and never moved.
+        let (top_w, base_w) = (env_f64("SLOTS_HOLD_TOP_WEIGHT", 200.0), env_f64("SLOTS_HOLD_BASE_WEIGHT", 400.0));
+        s += (r.rtp - g.rtp).abs() * top_w;
+        if r.rtp > 0.995 {
+            s += (r.rtp - 0.995) * 20_000.0;
+        }
+        let naive = analysis::naive_report(&machine(counts, rots, mults, g.mode)).ok()?.rtp;
+        s += (naive - base).abs() * base_w;
+    } else {
+        s += (r.rtp - g.rtp).abs() * 200.0;
+    }
     if r.hit_rate < g.hit.0 { s += (g.hit.0 - r.hit_rate) * 60.0; }
     if r.hit_rate > g.hit.1 { s += (r.hit_rate - g.hit.1) * 60.0; }
     Some(s)
@@ -240,13 +275,15 @@ fn main() {
     // The published prizes, in whole-bet multiples. What each machine *is*, chosen by hand;
     // the solver only decides how often.
     let goals = [
-        Goal { name: "GOLD RUSH",    mode: MODE_LINES, bet_mults: [50, 20, 10, 6, 3, 2, 1],   hit: (0.30, 0.42), floor_cap: f64::INFINITY },
-        // The hold machine cannot be the frequent one: optimal play *chases* — holds convert
-        // near-misses into mid-ladder wins — which drags the average win up, and at a x2 floor
-        // hit x avg-win must still fit under 0.9. So its temper is the chase itself: three
-        // decisions per bet, rarer but larger landings. The window only fences pathology.
-        Goal { name: "GRAVITY WELL", mode: MODE_HOLD,  bet_mults: [20, 10, 6, 4, 3, 2, 1],    hit: (0.24, 0.38), floor_cap: f64::INFINITY },
-        Goal { name: "LUCKY SPINS",  mode: MODE_LINES, bet_mults: [200, 40, 20, 10, 5, 2, 1], hit: (0.16, 0.24), floor_cap: RATIO_MAX },
+        // At a x2 floor, hit x average-win must fit under 0.9, so the hit windows sit lower than
+        // a bet-back floor allowed — and every one of those hits is a win.
+        Goal { name: "GOLD RUSH",    mode: MODE_LINES, bet_mults: [50, 20, 10, 6, 4, 3, 2],   hit: (0.22, 0.32), floor_cap: f64::INFINITY, rtp: TARGET_RTP, base_rtp: None },
+        // The hold machine pays two figures, both published: 75% to a player who never holds,
+        // 98% to one who holds well — the skill is worth 23 points and the expert nearly
+        // breaks even. Holds convert near-misses into mid-ladder wins, so the temper is the
+        // chase itself: three decisions per bet. The window only fences pathology.
+        Goal { name: "GRAVITY WELL", mode: MODE_HOLD,  bet_mults: [20, 10, 6, 5, 4, 3, 2],    hit: (0.20, 0.40), floor_cap: f64::INFINITY, rtp: 0.98, base_rtp: Some(0.75) },
+        Goal { name: "LUCKY SPINS",  mode: MODE_LINES, bet_mults: [200, 40, 20, 10, 5, 3, 2], hit: (0.13, 0.21), floor_cap: RATIO_MAX, rtp: TARGET_RTP, base_rtp: None },
     ];
 
     let mut out = String::from("[\n");
@@ -271,7 +308,11 @@ fn main() {
             g.name, r.rtp * 100.0, 1.0 / r.hit_rate, r.top_multiple
         );
         if g.mode == MODE_HOLD {
-            print!("  (optimal; no-hold {:.1}%)", analysis::no_hold_rtp(&m).unwrap() * 100.0);
+            print!(
+                "  (optimal; obvious holds {:.1}%; never holding {:.1}%)",
+                analysis::naive_report(&m).unwrap().rtp * 100.0,
+                analysis::no_hold_rtp(&m).unwrap() * 100.0,
+            );
         }
         if g.name == "LUCKY SPINS" {
             // every rung multiplies what rides by 2 × 0.48
@@ -291,7 +332,7 @@ fn main() {
                 _ => "lines",
             },
             m.stake_lamports,
-            if g.mode == MODE_HOLD { 3 } else { 1 },
+            if g.mode == MODE_HOLD { hold_rounds() } else { 1 },
             if g.name == "LUCKY SPINS" { 3 } else { 0 },
             if g.name == "LUCKY SPINS" { 48 } else { 50 },
             mults.map(|x| x.to_string()).join(","),
@@ -300,6 +341,7 @@ fn main() {
         ));
     }
     out.push_str("]\n");
-    std::fs::write("../scripts/machines.json", &out).unwrap();
-    println!("\nwrote ../scripts/machines.json");
+    let path = std::env::var("SLOTS_OUT").unwrap_or_else(|_| "../scripts/machines.json".to_string());
+    std::fs::write(&path, &out).unwrap();
+    println!("\nwrote {path}");
 }

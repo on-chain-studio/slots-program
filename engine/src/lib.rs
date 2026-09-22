@@ -455,6 +455,93 @@ pub mod analysis {
         Ok(Report { rtp: mean / stake, hit_rate: hits, top_multiple: top, states: n as u64 })
     }
 
+    /// The obvious hold, which is what a player who has never heard of optimal play actually
+    /// does: on a grid that already pays, hold everything; otherwise hold the two reels that
+    /// agree on some line — the best-paying pair if several do — and respin the rest; with no
+    /// pair, respin everything. The return under this rule is the machine's *default* return,
+    /// the one most players get, and the figure the house has to be honest about first.
+    pub fn naive_mask(card: &MachineConfig, stops: &Stops) -> u8 {
+        let reels = card.reels();
+        if super::value_unchecked(card, stops).lamports > 0 {
+            return ((1u16 << reels) - 1) as u8;
+        }
+        let g = super::grid(card, stops);
+        let mut best: Option<(u16, u8)> = None;
+        for l in card.lines() {
+            for a in 0..reels {
+                for b in (a + 1)..reels {
+                    let sa = g[a][l.rows[a] as usize];
+                    if sa != g[b][l.rows[b] as usize] {
+                        continue;
+                    }
+                    let mult = card.symbols[sa as usize].mult;
+                    if mult > 0 && best.map_or(true, |(m, _)| mult > m) {
+                        best = Some((mult, (1u8 << a) | (1u8 << b)));
+                    }
+                }
+            }
+        }
+        best.map_or(0, |(_, m)| m)
+    }
+
+    /// One round under a fixed policy rather than the best choice: the same bucketing as `step`,
+    /// but each state takes the mask the policy names instead of the mask that pays most.
+    fn policy_step(
+        card: &MachineConfig,
+        next: &[f64],
+        next_hit: &[f64],
+        policy: &dyn Fn(&Stops) -> u8,
+    ) -> (Vec<f64>, Vec<f64>) {
+        let n = next.len();
+        let masks = 1usize << card.reels();
+        let mut sum = vec![vec![0.0f64; n]; masks];
+        let mut hit = vec![vec![0.0f64; n]; masks];
+        let mut count = vec![vec![0u32; n]; masks];
+        for i in 0..n {
+            let stops = stops_at(card, i as u64);
+            for hold in 0..masks {
+                let key = projection(card, &stops, hold as u8);
+                sum[hold][key] += next[i];
+                hit[hold][key] += next_hit[i];
+                count[hold][key] += 1;
+            }
+        }
+        let mut ev = vec![0.0f64; n];
+        let mut ev_hit = vec![0.0f64; n];
+        for i in 0..n {
+            let stops = stops_at(card, i as u64);
+            let hold = policy(&stops) as usize;
+            let key = projection(card, &stops, hold as u8);
+            let c = count[hold][key] as f64;
+            ev[i] = sum[hold][key] / c;
+            ev_hit[i] = hit[hold][key] / c;
+        }
+        (ev, ev_hit)
+    }
+
+    /// The machine's numbers for the default player — `naive_mask` at every decision.
+    pub fn naive_report(card: &MachineConfig) -> Result<Report, BadMachine> {
+        card.check()?;
+        if card.stake_lamports == 0 {
+            return Err(BadMachine);
+        }
+        let stake = card.stake_lamports as f64;
+        let pay = payouts(card);
+        let n = pay.len();
+        let top = pay.iter().copied().max().unwrap_or(0) as f64 / stake;
+        let mut ev: Vec<f64> = pay.iter().map(|&p| p as f64).collect();
+        let mut hit: Vec<f64> = pay.iter().map(|&p| if p > 0 { 1.0 } else { 0.0 }).collect();
+        let policy = |s: &Stops| naive_mask(card, s);
+        for _ in 1..card.rounds() {
+            let (e, h) = policy_step(card, &ev, &hit, &policy);
+            ev = e;
+            hit = h;
+        }
+        let mean = ev.iter().sum::<f64>() / n as f64;
+        let hits = hit.iter().sum::<f64>() / n as f64;
+        Ok(Report { rtp: mean / stake, hit_rate: hits, top_multiple: top, states: n as u64 })
+    }
+
     /// What the hold is worth: the same machine played by someone who never holds. The gap
     /// between this and `report` is the skill component, and it is the part a naive RTP misses.
     pub fn no_hold_rtp(card: &MachineConfig) -> Result<f64, BadMachine> {

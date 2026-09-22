@@ -4,7 +4,7 @@
 //
 // Steps: Initialize (config + house + analytics) → open the house ledger → float it (deposit to
 // the admin ledger, settle admin → house) → fund the house PDA (spin rent + VRF) → delegate the
-// house PDA, analytics PDA and house ledger to the public ER.
+// house PDA, analytics PDA and house ledger to the TEE — the private rollup every spin lives on.
 
 import { LAMPORTS_PER_SOL, SystemProgram } from '@solana/web3.js';
 import {
@@ -14,7 +14,6 @@ import {
   PROGRAM, VAULT, PERMISSION, DELEGATION, SYSTEM, ER_VALIDATOR,
   vaultDepositIx, settleIx, delegateOwnLedgerIx, decodeLedger,
 } from './common.mjs';
-import { PUBLIC_ER } from './net.mjs';
 import { TransactionInstruction } from '@solana/web3.js';
 
 const MACHINE_COUNT = 0;                          // fresh shelf; machines come from set-machines.mjs
@@ -56,7 +55,7 @@ const delegatePdaIx = (seedStr, account) => new TransactionInstruction({
 const feesBefore = await base.getBalance(admin.publicKey);
 console.log('program  ', PROGRAM.toBase58());
 console.log('admin    ', admin.publicKey.toBase58());
-console.log('validator', ER_VALIDATOR.toBase58(), '(public ER)\n');
+console.log('validator', ER_VALIDATOR.toBase58(), '(TEE)\n');
 
 // 1 ── create + configure, one transaction
 console.log('1. create + configure');

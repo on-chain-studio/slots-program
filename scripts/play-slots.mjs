@@ -1,4 +1,4 @@
-// Plays a real spin on devnet, end to end, against the public ER.
+// Plays a real spin on devnet, end to end, in the TEE.
 //
 //   node scripts/play-slots.mjs [machine]     0 = lines (default), 1 = hold, 2 = gamble
 //   node scripts/play-slots.mjs 2 --close     undelegate + withdraw the player ledger after
@@ -12,9 +12,10 @@ import {
   requestBetIx, betLedgers, resolveBetAccounts, settleReceiptIx,
   requestRevealIx, holdIx, gambleIx, requestCollectIx, collectLedgers, resolveCollectAccounts,
   vaultDepositIx, delegateOwnLedgerIx, undelegateOwnLedgerIx,
-  DELEGATION, VAULT, ER_VALIDATOR,
+  DELEGATION, VAULT, ER_VALIDATOR, dpda,
 } from './common.mjs';
-import { PUBLIC_ER } from './net.mjs';
+import { ROUTER } from './net.mjs';
+import { teeEndpoint, endpointHolding } from './tee-auth.mjs';
 import { TransactionInstruction, PublicKey } from '@solana/web3.js';
 
 const MACHINE = Number(process.argv[2]) || 0;
@@ -23,7 +24,7 @@ const STAKE = 5_000_000;
 const BUDGET = STAKE * 4;   // enough for a spin with retries; deposits top up only the shortfall
 
 const player = admin;
-const er = connect(PUBLIC_ER);
+const er = connect(await teeEndpoint(player));
 const user = player.publicKey;
 
 const ok = (m) => console.log(`  ✅ ${m}`);
@@ -51,6 +52,22 @@ console.log('machine', MACHINE, ' player', user.toBase58(), '\n');
 console.log('1. player ledger');
 {
   let onEr = await ownerIs(ledgerPda(user), DELEGATION);
+  // Anyone's game may have delegated this ledger, to any validator. The router says which;
+  // a ledger held elsewhere is brought home from there before it can be delegated to ours.
+  if (onEr) {
+    const record = await info(dpda('delegation', ledgerPda(user), DELEGATION));
+    const holder = record ? new PublicKey(record.data.subarray(8, 40)) : null;
+    if (holder && !holder.equals(ER_VALIDATOR)) {
+      const there = await endpointHolding(ledgerPda(user), player, ROUTER);
+      if (!there) throw new Error('ledger delegated, but the router cannot say where');
+      await send(connect(there), [undelegateOwnLedgerIx(user)], [player]);
+      for (let i = 0; i < 40 && onEr; i++) {
+        if (await ownerIs(ledgerPda(user), VAULT)) onEr = false; else await sleep(1000);
+      }
+      if (onEr) throw new Error('reclaim from the other validator never landed');
+      ok(`reclaimed the ledger from ${holder.toBase58().slice(0, 8)}…`);
+    }
+  }
   const led = await readLedger(onEr ? er : base, user);
   const have = Number(led?.sol ?? 0n);
   const short = Math.max(0, BUDGET - have);
