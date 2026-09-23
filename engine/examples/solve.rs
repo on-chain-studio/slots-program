@@ -283,61 +283,66 @@ fn main() {
         // breaks even. Holds convert near-misses into mid-ladder wins, so the temper is the
         // chase itself: three decisions per bet. The window only fences pathology.
         Goal { name: "GRAVITY WELL", mode: MODE_HOLD,  bet_mults: [20, 10, 6, 5, 4, 3, 2],    hit: (0.20, 0.40), floor_cap: f64::INFINITY, rtp: 0.98, base_rtp: Some(0.75) },
-        Goal { name: "LUCKY SPINS",  mode: MODE_LINES, bet_mults: [200, 40, 20, 10, 5, 3, 2], hit: (0.13, 0.21), floor_cap: RATIO_MAX, rtp: TARGET_RTP, base_rtp: None },
+    ];
+
+    // Solve each machine once. The stake never enters the solve — RTP is a ratio — so a machine
+    // is published at two stakes below, low and high, from one set of strips.
+    let solved: Vec<MachineConfig> = goals
+        .iter()
+        .enumerate()
+        .map(|(i, g)| {
+            let (counts, rots, mults) = solve(g, 0x5107 + i as u64);
+            if g.mode != MODE_HOLD {
+                for s in 1..SYMS {
+                    let p_prev = counts.iter().map(|c| c[s - 1]).product::<usize>() as f64;
+                    let p_this = counts.iter().map(|c| c[s]).product::<usize>() as f64;
+                    let cap = if s == SYMS - 1 { g.floor_cap } else { RATIO_MAX };
+                    assert!(
+                        p_this >= p_prev * RATIO_MIN && p_this <= p_prev * cap,
+                        "{}: tier {} product {} outside [{}, {}] of previous {}",
+                        g.name, s, p_this, p_prev * RATIO_MIN, p_prev * cap, p_prev,
+                    );
+                }
+            }
+            let m = machine(&counts, &rots, &mults, g.mode);
+            let r = analysis::report(&m).unwrap();
+            print!("{:13} rtp {:6.2}%  hit 1 in {:4.1}  top x{:4.1}", g.name, r.rtp * 100.0, 1.0 / r.hit_rate, r.top_multiple);
+            if g.mode == MODE_HOLD {
+                print!("  (obvious holds {:.1}%; never holding {:.1}%)",
+                    analysis::naive_report(&m).unwrap().rtp * 100.0, analysis::no_hold_rtp(&m).unwrap() * 100.0);
+            }
+            println!();
+            m
+        })
+        .collect();
+
+    // The shelf, in on-chain id order: each solved machine at a low and a high stake. The `name`
+    // is a label for the client (which supplies the theme); the chain carries only the math. Goal
+    // 0 is the lines machine, goal 1 the hold machine.
+    let shelf: [(&str, usize, u64); 4] = [
+        ("GOLD RUSH",    0, 50_000_000),
+        ("NEON NIGHTS",  0,  5_000_000),
+        ("GRAVITY WELL", 1,  5_000_000),
+        ("BLACK HOLE",   1, 50_000_000),
     ];
 
     let mut out = String::from("[\n");
-    for (i, g) in goals.iter().enumerate() {
-        let (counts, rots, mults) = solve(g, 0x5107 + i as u64);
-        if g.mode != MODE_HOLD {
-            for s in 1..SYMS {
-                let p_prev = counts.iter().map(|c| c[s - 1]).product::<usize>() as f64;
-                let p_this = counts.iter().map(|c| c[s]).product::<usize>() as f64;
-                let cap = if s == SYMS - 1 { g.floor_cap } else { RATIO_MAX };
-                assert!(
-                    p_this >= p_prev * RATIO_MIN && p_this <= p_prev * cap,
-                    "{}: tier {} product {} outside [{}, {}] of previous {}",
-                    g.name, s, p_this, p_prev * RATIO_MIN, p_prev * cap, p_prev,
-                );
-            }
-        }
-        let m = machine(&counts, &rots, &mults, g.mode);
-        let r = analysis::report(&m).unwrap();
-        print!(
-            "{:13} rtp {:6.2}%  hit 1 in {:4.1}  top x{:4.1}",
-            g.name, r.rtp * 100.0, 1.0 / r.hit_rate, r.top_multiple
-        );
-        if g.mode == MODE_HOLD {
-            print!(
-                "  (optimal; obvious holds {:.1}%; never holding {:.1}%)",
-                analysis::naive_report(&m).unwrap().rtp * 100.0,
-                analysis::no_hold_rtp(&m).unwrap() * 100.0,
-            );
-        }
-        if g.name == "LUCKY SPINS" {
-            // every rung multiplies what rides by 2 × 0.48
-            print!("  (3 rungs climbed → {:.1}%)", r.rtp * 0.96f64.powi(3) * 100.0);
-        }
-        println!();
-
+    for (i, (label, goal, stake)) in shelf.iter().enumerate() {
+        let g = &goals[*goal];
+        let m = &solved[*goal];
         let strips: Vec<String> = (0..REELS)
             .map(|r| format!("[{}]", m.strips[r][..STRIP].iter().map(|s| s.to_string()).collect::<Vec<_>>().join(",")))
             .collect();
+        let mults: Vec<String> = m.symbols[..SYMS].iter().map(|s| s.mult.to_string()).collect();
         out.push_str(&format!(
-            "  {{ \"name\": \"{}\", \"mode\": \"{}\", \"stake\": {}, \"rounds\": {}, \"rungs\": {}, \"win_pct\": {},\n    \"mults\": [{}],\n    \"strips\": [{}] }}{}\n",
-            g.name,
-            match (g.mode, g.name) {
-                (MODE_HOLD, _) => "hold",
-                (_, "LUCKY SPINS") => "gamble",
-                _ => "lines",
-            },
-            m.stake_lamports,
+            "  {{ \"name\": \"{}\", \"mode\": \"{}\", \"stake\": {}, \"rounds\": {}, \"rungs\": 0, \"win_pct\": 50,\n    \"mults\": [{}],\n    \"strips\": [{}] }}{}\n",
+            label,
+            if g.mode == MODE_HOLD { "hold" } else { "lines" },
+            stake,
             if g.mode == MODE_HOLD { hold_rounds() } else { 1 },
-            if g.name == "LUCKY SPINS" { 3 } else { 0 },
-            if g.name == "LUCKY SPINS" { 48 } else { 50 },
-            mults.map(|x| x.to_string()).join(","),
+            mults.join(","),
             strips.join(", "),
-            if i + 1 < goals.len() { "," } else { "" },
+            if i + 1 < shelf.len() { "," } else { "" },
         ));
     }
     out.push_str("]\n");
