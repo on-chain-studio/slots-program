@@ -320,8 +320,8 @@ fn main() {
     // is a label for the client (which supplies the theme); the chain carries only the math. Goal
     // 0 is the lines machine, goal 1 the hold machine.
     let shelf: [(&str, usize, u64); 4] = [
-        ("GOLD RUSH",    0, 50_000_000),
         ("NEON NIGHTS",  0,  5_000_000),
+        ("GOLD RUSH",    0, 50_000_000),
         ("GRAVITY WELL", 1,  5_000_000),
         ("BLACK HOLE",   1, 50_000_000),
     ];
