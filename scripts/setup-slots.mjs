@@ -15,10 +15,13 @@ import {
   vaultDepositIx, settleIx, delegateOwnLedgerIx, decodeLedger,
 } from './common.mjs';
 import { TransactionInstruction } from '@solana/web3.js';
+import { MAINNET } from './net.mjs';
 
 const MACHINE_COUNT = 0;                          // fresh shelf; machines come from set-machines.mjs
 const HOUSE_PDA_FUND = 0.1 * LAMPORTS_PER_SOL;    // on ["house"]: spin ephemeral rent + VRF fees
-const HOUSE_FLOAT = 1 * LAMPORTS_PER_SOL;         // on the house *ledger*: the payout float
+// On the house *ledger*: the payout float. Must cover the largest single win — Gold Rush at the
+// 0.05 stake is x80 = 4 SOL — with margin. Devnet plays with a token amount.
+const HOUSE_FLOAT = (MAINNET ? 5 : 1) * LAMPORTS_PER_SOL;
 const HOUSE_SLOTS = 8;
 
 const config = configPda(), house = housePda(), analytics = analyticsPda();
