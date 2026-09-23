@@ -101,6 +101,10 @@ pub fn require_callback(vault_authority: &AccountInfo) -> Result<(), ProgramErro
     Ok(())
 }
 
+/// Closes an ephemeral account the house sponsored, through the Magic program and no other.
+/// The account passed as the program is the settle transaction's to choose, and this call hands
+/// whatever it names the house's signature: a program that merely returns would leave the spin
+/// standing, paid, and collectable again.
 pub fn close<'a>(
     magic_program: &AccountInfo,
     house: &AccountInfo,
@@ -108,9 +112,12 @@ pub fn close<'a>(
     ephemeral_vault: &AccountInfo,
     house_bump: u8,
 ) -> ProgramResult {
+    if magic_program.address() != &crate::magicblock::MAGIC_PROGRAM_ID {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     invoke_signed(
         &Instruction {
-            program_id: *magic_program.address(),
+            program_id: crate::magicblock::MAGIC_PROGRAM_ID,
             accounts: vec![
                 AccountMeta::new(*house.address(), true),
                 AccountMeta::new(*receipt.address(), false),

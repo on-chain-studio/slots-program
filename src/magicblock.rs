@@ -173,13 +173,16 @@ pub fn delegate_account(
     }
     pda.try_borrow_mut_data()?.fill(0);
 
-    if pda.owner() != system_program.address() {
-        let mut view = *pda;
-        unsafe { view.assign(system_program.address()) };
+    if delegation_program.address() != &DELEGATION_PROGRAM_ID || system_program.address() != &SYSTEM_PROGRAM {
+        return Err(ProgramError::IncorrectProgramId);
     }
-    if pda.owner() != delegation_program.address() {
+    if pda.owner() != &SYSTEM_PROGRAM {
+        let mut view = *pda;
+        unsafe { view.assign(&SYSTEM_PROGRAM) };
+    }
+    if pda.owner() != &DELEGATION_PROGRAM_ID {
         invoke_signed(
-            &assign(pda.address(), delegation_program.address()),
+            &assign(pda.address(), &DELEGATION_PROGRAM_ID),
             &[*pda, *system_program],
             pda_signer,
         )?;
@@ -295,7 +298,11 @@ pub fn commit_and_undelegate(
             }
         })
         .collect();
-    invoke(&Instruction { program_id: *magic_program.address(), accounts: metas, data }, &unique)
+    // The Magic program and no other: the caller's account is only the runtime's handle to it.
+    if magic_program.address() != &MAGIC_PROGRAM_ID {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    invoke(&Instruction { program_id: MAGIC_PROGRAM_ID, accounts: metas, data }, &unique)
 }
 
 // ---------------------------------------------------------------------------------------------
