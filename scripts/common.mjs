@@ -166,8 +166,12 @@ export const resolveCollectAccounts = (user) => [
   rw(analyticsPda()),
 ];
 
-/** settle_receipt — top-level vault: moves the balances, then calls back into the game. */
-export const settleReceiptIx = (consenter, consenterSigns, ledgers, extra) =>
+/** `["session", owner]` — the wallet's session store at the vault, never delegated. */
+export const sessionPda = (owner) => pda([Buffer.from('session'), owner.toBuffer()], VAULT);
+
+/** settle_receipt — top-level vault: moves the balances, then calls back into the game. The
+ *  player's session store follows the ledgers: consent is the owner or a key granted there. */
+export const settleReceiptIx = (user, consenter, consenterSigns, ledgers, extra) =>
   new TransactionInstruction({
     programId: VAULT,
     keys: [
@@ -176,6 +180,7 @@ export const settleReceiptIx = (consenter, consenterSigns, ledgers, extra) =>
       ro(PROGRAM), ro(vaultAuthorityPda()),
       rw(EPHEMERAL_VAULT), ro(MAGIC_PROGRAM), rw(MAGIC_CONTEXT),
       ...ledgers.map(rw),
+      ro(sessionPda(user)),
       ...extra,
     ],
     data: anchorDisc('settle_receipt'),
@@ -183,15 +188,32 @@ export const settleReceiptIx = (consenter, consenterSigns, ledgers, extra) =>
 
 // ── vault instructions the player calls directly ───────────────────────────────────────────
 
+/** Creates the ledger, its permission and its session store on first use. */
 export const vaultDepositIx = (owner, lamports) => new TransactionInstruction({
   programId: VAULT,
   keys: [
     sg(owner), rw(ledgerPda(owner)), rw(permPda(ledgerPda(owner))), ro(PERMISSION),
     rw(reservePda()), ro(SYSTEM), ro(SYSTEM), ro(new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')),
-    ro(SYSTEM),
+    ro(SYSTEM), rw(sessionPda(owner)),
   ],
   data: Buffer.concat([anchorDisc('deposit'), SOL_MINT.toBuffer(), u64(lamports),
                        Buffer.from([0]), Buffer.from([0])]),
+});
+
+/** authorize_session — lets `key` consent for this game on the owner's ledger; basenet, the
+ *  owner signs. `expiresAt` zero is a persisted key in the game's ring of five, anything else a
+ *  temporary key dead at that unix second. Creates the store if the ledger predates it. */
+export const authorizeSessionIx = (owner, key, expiresAt = 0n) => new TransactionInstruction({
+  programId: VAULT,
+  keys: [rw(sessionPda(owner)), sg(owner), ro(SYSTEM)],
+  data: Buffer.concat([anchorDisc('authorize_session'), PROGRAM.toBuffer(), key.toBuffer(), u64(expiresAt)]),
+});
+
+/** revoke_session — forgets one of this game's keys; the zero key drops the game's entry. */
+export const revokeSessionIx = (owner, key = SYSTEM) => new TransactionInstruction({
+  programId: VAULT,
+  keys: [rw(sessionPda(owner)), sg(owner)],
+  data: Buffer.concat([anchorDisc('revoke_session'), PROGRAM.toBuffer(), key.toBuffer()]),
 });
 
 export const settleIx = (srcOwner, dstOwner, lamports) => new TransactionInstruction({

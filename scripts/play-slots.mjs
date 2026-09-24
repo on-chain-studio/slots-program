@@ -1,6 +1,7 @@
 // Plays a real spin on devnet, end to end, in the TEE.
 //
-//   node scripts/play-slots.mjs [machine]     0 = lines (default), 1 = hold, 2 = gamble
+//   node scripts/play-slots.mjs [machine]     index into scripts/machines.json, 0 by default;
+//                                             the machine's mode decides how the spin is played
 //   node scripts/play-slots.mjs 2 --close     undelegate + withdraw the player ledger after
 //
 // Plays as the admin key against a ledger that persists between runs: deposit only the
@@ -20,6 +21,8 @@ import { TransactionInstruction, PublicKey, Keypair } from '@solana/web3.js';
 import fs from 'fs';
 
 const MACHINE = Number(process.argv[2]) || 0;
+const MODE = JSON.parse(fs.readFileSync(new URL('machines.json', import.meta.url), 'utf8'))[MACHINE]?.mode
+  ?? (() => { throw new Error(`no machine ${MACHINE} in machines.json`); })();
 const CLOSE = process.argv.includes('--close');
 const STAKE = 5_000_000;
 const BUDGET = Number(process.env.BUDGET) || STAKE * 4;   // top up only the shortfall; override for higher-stake machines
@@ -109,14 +112,14 @@ console.log('2. bet');
     if (leftover.status !== 'rolled') throw new Error(`a ${leftover.status} spin exists — reveal or CloseSpin first`);
     await send(er, [
       requestCollectIx(user),
-      settleReceiptIx(user, true, collectLedgers(user), resolveCollectAccounts(user)),
+      settleReceiptIx(user, user, true, collectLedgers(user), resolveCollectAccounts(user)),
     ], [player]);
     for (let i = 0; i < 40 && await readSpin(); i++) await sleep(750);
     ok('collected a leftover spin from a previous run');
   }
   await send(er, [
     requestBetIx(user, user, MACHINE),
-    settleReceiptIx(user, true, betLedgers(user), resolveBetAccounts(user)),
+    settleReceiptIx(user, user, true, betLedgers(user), resolveBetAccounts(user)),
   ], [player]);
   const s = await awaitStatus('bought', 'bet');
   ok(`stake settled, spin created (machine ${s.machineId})`);
@@ -133,7 +136,7 @@ const reveal = async (label) => {
 console.log('3. play');
 await reveal('spin');
 
-if (MACHINE === 1) {
+if (MODE === 'hold') {
   // hold: keep reel 0 through two respins — grids applied on chain, stops visible after each
   for (const round of [1, 2]) {
     await send(er, [holdIx(user, user, 0b001)], [player]);
@@ -141,7 +144,7 @@ if (MACHINE === 1) {
     ok(`held reel 0 → round ${s.round}, stops so far [${s.stops.slice(0, 3)}]`);
     await reveal(`respin ${round}`);
   }
-} else if (MACHINE === 2) {
+} else if (MODE === 'gamble') {
   // gamble: climb one rung if the base spin won anything; a losing base refuses the climb
   try {
     await send(er, [gambleIx(user, user)], [player]);
@@ -158,7 +161,7 @@ console.log('4. collect');
 {
   await send(er, [
     requestCollectIx(user),
-    settleReceiptIx(user, true, collectLedgers(user), resolveCollectAccounts(user)),
+    settleReceiptIx(user, user, true, collectLedgers(user), resolveCollectAccounts(user)),
   ], [player]);
   for (let i = 0; i < 40; i++) {
     if (!(await readSpin())) break;

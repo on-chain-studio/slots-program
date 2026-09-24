@@ -27,6 +27,7 @@ export const ROUTER = MAINNET ? 'https://router.magicblock.app'
 
 /** casino_admin on both clusters: it deployed the program, holds its upgrade authority, and is
  *  funded on devnet too. (Scratch cards splits by cluster; slots deliberately does not.) */
-export const ADMIN_PATH = `${os.homedir()}/casino_admin.json`;
+export const KEYS_DIR = process.env.KEYS_DIR ?? `${os.homedir()}/keys`;
+export const ADMIN_PATH = `${KEYS_DIR}/casino_admin.json`;
 
 if (MAINNET) console.log('■ MAINNET — real funds\n');
