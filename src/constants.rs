@@ -32,6 +32,6 @@ pub const TOKEN_PROGRAM: Pubkey = Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbG
 /// MagicBlock's access-control program — permissions gating who may read an account on the TEE.
 pub const PERMISSION_PROGRAM: Pubkey = Pubkey::from_str_const("ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1");
 
-/// MagicBlock VRF program and its identity signer for callbacks.
-pub const VRF_PROGRAM:          Pubkey = Pubkey::from_str_const("Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz");
-pub const VRF_PROGRAM_IDENTITY: Pubkey = Pubkey::from_str_const("9irBy75QS2BN81FUgXuHcjqceJJRuc9oDkAe8TKVvvAw");
+/// MagicBlock VRF program. Callbacks are signed by the scoped identity `["identity", program]`
+/// at the VRF program — `utils::vrf::callback_identity`.
+pub const VRF_PROGRAM: Pubkey = Pubkey::from_str_const("Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz");

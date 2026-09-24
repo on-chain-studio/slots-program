@@ -112,22 +112,8 @@ pub fn close<'a>(
     ephemeral_vault: &AccountInfo,
     house_bump: u8,
 ) -> ProgramResult {
-    if magic_program.address() != &crate::magicblock::MAGIC_PROGRAM_ID {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-    invoke_signed(
-        &Instruction {
-            program_id: crate::magicblock::MAGIC_PROGRAM_ID,
-            accounts: vec![
-                AccountMeta::new(*house.address(), true),
-                AccountMeta::new(*receipt.address(), false),
-                AccountMeta::new(*ephemeral_vault.address(), false),
-            ],
-            // MagicBlockInstruction::CloseEphemeralAccount = variant 14 (bincode u32 LE)
-            data: 14u32.to_le_bytes().to_vec(),
-        },
-        &[house.clone(), receipt.clone(), ephemeral_vault.clone()],
-        &[&[b"house", &[house_bump]]],
+    crate::magicblock::close_ephemeral_account(
+        house, receipt, ephemeral_vault, magic_program, &[&[b"house", &[house_bump]]],
     )
 }
 

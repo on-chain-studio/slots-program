@@ -1,28 +1,23 @@
-use borsh::BorshSerialize;
 use crate::chain::*;
+use ephemeral_rollups_pinocchio::vrf::{scoped_vrf_identity, RequestRandomness, RequestRandomnessCpi};
+use pinocchio::cpi::{Seed, Signer};
+use pinocchio::instruction::InstructionAccount;
 
-use crate::constants::VRF_PROGRAM;
-
-/// Wire format of the MagicBlock VRF `RequestRandomness` instruction
-/// (mirrors ephemeral-vrf-sdk, hand-rolled to stay off its dependency tree).
-#[derive(BorshSerialize)]
-struct RequestRandomness {
-    caller_seed: [u8; 32],
-    callback_program_id: Pubkey,
-    callback_discriminator: Vec<u8>,
-    callback_accounts_metas: Vec<SerializableAccountMeta>,
-    callback_args: Vec<u8>,
-}
-
-#[derive(BorshSerialize, Clone)]
+#[derive(Clone)]
 pub struct SerializableAccountMeta {
     pub pubkey: Pubkey,
     pub is_signer: bool,
     pub is_writable: bool,
 }
 
-/// CPIs into the VRF program. The oracle later calls back into this program with
-/// `callback_discriminator` ++ 32 bytes of randomness, signed by the VRF identity.
+/// The identity that signs this program's callbacks: `["identity", program]` at the VRF program.
+pub fn callback_identity(program_id: &Pubkey) -> Pubkey {
+    scoped_vrf_identity(program_id).0
+}
+
+/// Asks the VRF program for randomness, scoped to this program. The oracle later calls back
+/// with `callback_discriminator` ++ 32 bytes of randomness ++ `callback_args`, signed by
+/// [`callback_identity`].
 ///
 /// Accounts: payer (signer, **writable**), our ["identity"] PDA (signs via seeds),
 /// oracle queue (writable), system program, slot hashes sysvar.
@@ -48,39 +43,32 @@ pub fn request_randomness<'a>(
     // a later one's seed — the disclosure trap of every machine with a decision between rounds.
     callback_args: Vec<u8>,
     payer_seeds: &[&[u8]],
-    ephemeral: bool,
+    high_priority: bool,
 ) -> ProgramResult {
-    let payload = RequestRandomness {
+    let metas: Vec<InstructionAccount> = callback_accounts
+        .iter()
+        .map(|meta| InstructionAccount::new(&meta.pubkey, meta.is_writable, meta.is_signer))
+        .collect();
+    let request = RequestRandomness {
+        high_priority,
         caller_seed,
-        callback_program_id: *program_id,
-        callback_discriminator: callback_discriminator.to_vec(),
-        callback_accounts_metas: callback_accounts,
-        callback_args,
+        callback_program_id: program_id,
+        callback_discriminator: &callback_discriminator,
+        callback_accounts_metas: &metas,
+        callback_args: &callback_args,
     };
-    // 8-byte VRF instruction discriminator: 3 = ephemeral queue, 8 = regular queue
-    let mut data = vec![if ephemeral { 3u8 } else { 8u8 }, 0, 0, 0, 0, 0, 0, 0];
-    payload.serialize(&mut data).map_err(|_| ProgramError::InvalidInstructionData)?;
-
-    invoke_signed(
-        &Instruction {
-            program_id: VRF_PROGRAM,
-            accounts: vec![
-                AccountMeta::new(*payer.address(), true),
-                AccountMeta::new_readonly(*identity.address(), true),
-                AccountMeta::new(*oracle_queue.address(), false),
-                AccountMeta::new_readonly(*system_program.address(), false),
-                AccountMeta::new_readonly(*slot_hashes.address(), false),
-            ],
-            data,
-        },
-        &[
-            payer.clone(),
-            identity.clone(),
-            oracle_queue.clone(),
-            system_program.clone(),
-            slot_hashes.clone(),
-            vrf_program.clone(),
-        ],
-        &[&[b"identity", &[identity_bump]], payer_seeds],
-    )
+    let cpi = RequestRandomnessCpi {
+        payer,
+        program_identity: identity,
+        oracle_queue,
+        system_program,
+        slot_hashes,
+        vrf_program,
+        request,
+    };
+    let mut data = vec![0u8; cpi.serialized_size()];
+    let identity_bump = [identity_bump];
+    let identity_seeds = [Seed::from(b"identity".as_slice()), Seed::from(identity_bump.as_slice())];
+    let payer_seeds: Vec<Seed> = payer_seeds.iter().map(|seed| Seed::from(*seed)).collect();
+    cpi.invoke_signed(&mut data, &[Signer::from(identity_seeds.as_slice()), Signer::from(payer_seeds.as_slice())])
 }

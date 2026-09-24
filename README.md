@@ -2,12 +2,11 @@
 
 On-chain program for **Slot Machines**, sibling to `../scratch-cards-program` and in its exact
 shape: a native (non-Anchor) program on Pinocchio, through Solarium's `#[program]` dispatch (`src/lib.rs` is the
-whole wire interface, numbered as it always was), bytemuck state, and every call to another program written out as
-bytes: `src/chain.rs` is the chain as the program uses it, `src/magicblock.rs` the delegation,
-ephemeral-account and permission calls exactly as `ephemeral-rollups-sdk` 0.14.4 makes them.
-`tests/differential.rs` holds it to the solana-program build it replaced.
+whole wire interface, numbered as it always was), bytemuck state, `src/chain.rs` as the chain the program uses, and
+`src/magicblock.rs` as thin adapters over `ephemeral-rollups-pinocchio` — MagicBlock's own crate — for delegation,
+ephemeral accounts, permissions and VRF. Permissions are created once and never updated.
 
-Program id: `SLoTSdnmBH5KtNJjhEYw1MeWTKAfRnFfQTTcpgwRn2Q` (`keys/program-keypair.json`) —
+Program id: `SLoTSdnmBH5KtNJjhEYw1MeWTKAfRnFfQTTcpgwRn2Q` (`~/keys/slots_program.json`) —
 live on devnet, upgrade authority `~/casino_admin.json`. Scripts pick the cluster with
 `--mainnet`; the admin key is casino_admin on both.
 
@@ -83,8 +82,6 @@ enumerator and writes `scripts/machines.json`. Republishing is `set-machines.mjs
 ```
 cargo build-sbf                      # target/deploy/slots.so
 cargo test                           # program: layout + wire pins, SetMachine validation
-scripts/parity.sh                    # the built .so against the deployed one: every instruction
-                                     # and mutation, byte for byte (tests/differential.rs)
 SBF_OUT_DIR=$PWD/target/deploy cargo test --test program -- --ignored
                                      # the built .so run in Mollusk: dispatch, refusals, hold, VRF
 (cd engine && cargo test --release)  # engine: determinism, RTP enumeration, hold DP, parity

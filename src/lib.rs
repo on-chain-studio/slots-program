@@ -403,5 +403,4 @@ impl Slots {
             receipt.info.as_view(), vault_authority.info.as_view(), house.info.as_view(), spin.info.as_view(), ephemeral_vault.info.as_view(),
             magic_program.info.as_view(), analytics.info.as_view(),
         )?)
-    }
-}
+    }}

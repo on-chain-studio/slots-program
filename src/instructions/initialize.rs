@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::magicblock::{create_permission, update_permission};
+use crate::magicblock::create_permission;
 use crate::chain::*;
 
 use crate::constants::{is_admin, ADMIN_PUBKEYS, PERMISSION_PROGRAM, TREASURIES, VAULT_PROGRAM};
@@ -104,16 +104,13 @@ impl Initialize {
         // live copy. Both programs are members because the rollup admits an instruction that
         // touches a permissioned account only when the *invoked program* is a member — and the
         // settle that writes these counters is a vault instruction, exactly the reason every
-        // ledger's permission names the vault and the game alike. The set is enforced on every
-        // run (update when the account already exists), so changing it is one re-run away.
+        // ledger's permission names the vault and the game alike. Made once and never rewritten:
+        // an update through the ACL program is not something this program does.
         let mut members = vec![*program_id, VAULT_PROGRAM];
         members.extend(ADMIN_PUBKEYS);
         let seeds: &[&[u8]] = &[b"analytics", &[analytics_bump]];
         if permission.data_len() == 0 {
             create_permission(analytics_account, permission, initializer, system_program, &members, &[seeds])
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-        } else {
-            update_permission((analytics_account, false), (analytics_account, true), permission, &members, &[seeds])
                 .map_err(|_| ProgramError::InvalidAccountData)?;
         }
 

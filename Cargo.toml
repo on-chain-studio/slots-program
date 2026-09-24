@@ -25,6 +25,7 @@ pinocchio = { version = "0.11.2", default-features = false, features = [
     "account-resize",
 ] }
 pinocchio-system = { version = "0.6", default-features = false }
+ephemeral-rollups-pinocchio = { version = "0.17.3", default-features = false }
 borsh = { version = "1", features = ["derive"] }
 slots-engine = { path = "engine" }
 bytemuck = { version = "1", features = ["derive", "min_const_generics"] }

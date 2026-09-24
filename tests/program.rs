@@ -236,7 +236,7 @@ fn reveal(table: &Table, randomness: [u8; 32], round: u64, extra: &[u8]) -> Inst
         program(),
         &data,
         vec![
-            AccountMeta::new_readonly(key(slots::constants::VRF_PROGRAM_IDENTITY.to_bytes()), true),
+            AccountMeta::new_readonly(key(slots::utils::vrf::callback_identity(&slots::ID).to_bytes()), true),
             AccountMeta::new(table.spin, false),
         ],
     )
@@ -246,7 +246,7 @@ fn reveal(table: &Table, randomness: [u8; 32], round: u64, extra: &[u8]) -> Inst
 #[ignore = "needs cargo build-sbf"]
 fn the_oracle_lands_its_seed_on_the_round_it_was_asked_for() {
     let table = Table::new();
-    let identity = key(slots::constants::VRF_PROGRAM_IDENTITY.to_bytes());
+    let identity = key(slots::utils::vrf::callback_identity(&slots::ID).to_bytes());
     let result = mollusk().process_instruction(
         // Whatever the oracle appends after the round is not the program's business.
         &reveal(&table, [9; 32], 1, &[0xAA; 8]),
@@ -265,7 +265,7 @@ fn the_oracle_lands_its_seed_on_the_round_it_was_asked_for() {
 #[ignore = "needs cargo build-sbf"]
 fn a_late_answer_for_an_earlier_round_is_refused() {
     let table = Table::new();
-    let identity = key(slots::constants::VRF_PROGRAM_IDENTITY.to_bytes());
+    let identity = key(slots::utils::vrf::callback_identity(&slots::ID).to_bytes());
     let result = mollusk().process_instruction(
         &reveal(&table, [9; 32], 0, &[]),
         &[
