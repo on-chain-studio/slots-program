@@ -34,9 +34,12 @@ impl ResolveBet {
         house: &AccountInfo,
         spin_account: &AccountInfo,
         ephemeral_vault: &AccountInfo,
-        _magic_program: &AccountInfo,
+        magic_program: &AccountInfo,
         analytics_account: &AccountInfo,
+        spin_permission: &AccountInfo,
+        permission_program: &AccountInfo,
     ) -> ProgramResult {
+        let _ = permission_program; // in scope so the ACL CPI can resolve; not read directly
         let program_id = &crate::ID;
 
         if *ephemeral_vault.address() != EPHEMERAL_VAULT_ID {
@@ -83,6 +86,30 @@ impl ResolveBet {
             s.pending = 0;
         }
         Spin::write_terms(spin_account, &terms)?;
+
+        // Make the spin private on the TEE. A stranger can otherwise derive ["spin", user] and read
+        // the account and its entire signature history (every bet/reveal/collect, timestamped).
+        // Members: the player's wallet, whose own TEE token authorises the client's reads and
+        // subscriptions, and every program that is ever top-level over the spin — a private-rollup
+        // account admits a transaction only when its top-level program is a member: the vault
+        // (settle callbacks) and the VRF program (the seed callback). ER-only (house fronts the
+        // rent) and never closed (closing would re-expose the not-yet-compressed history). Every
+        // bet re-asserts the list, so a permission made under an older one is brought to parity the
+        // next time its owner plays; a matching one costs a read, not a write.
+        let members = [self.human, crate::constants::VAULT_PROGRAM, crate::constants::VRF_PROGRAM];
+        let signers: &[&[&[u8]]] = &[
+            &[b"house", &[house_bump]],
+            &[b"spin", self.human.as_ref(), &[spin_bump]],
+        ];
+        if spin_permission.data_len() == 0 {
+            crate::magicblock::create_ephemeral_permission(
+                house, spin_account, spin_permission, ephemeral_vault, magic_program, &members, signers,
+            )?;
+        } else if !crate::magicblock::ephemeral_permission_matches(spin_permission, &members)? {
+            crate::magicblock::update_ephemeral_permission(
+                house, spin_account, spin_permission, ephemeral_vault, magic_program, &members, signers,
+            )?;
+        }
 
         // This callback only fires on a settled stake, so the count is settled money.
         pda::validate(program_id, analytics_account, &[b"analytics"])?;

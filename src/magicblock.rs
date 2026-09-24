@@ -397,3 +397,104 @@ pub fn update_permission(
         signers_seeds,
     )
 }
+
+/// The ACL discriminator + member flags, from `ephemeral-rollups-sdk` v0.14
+/// (`access_control::instructions::create_ephemeral_permission`, `structs::member`).
+const CREATE_EPHEMERAL_PERMISSION: u64 = 6;
+const AUTHORITY_FLAG: u8 = 1 << 0;
+/// Full read (logs, balances, messages, signatures, account data) minus authority — a reader must
+/// never be able to rewrite the member list through the ACL program, only the permissioned PDA can.
+const MEMBER_READ: u8 = 0xFF & !AUTHORITY_FLAG;
+
+const UPDATE_EPHEMERAL_PERMISSION: u64 = 7;
+
+/// Discriminator, then `is_private`, then each member as `flags:u8 ++ pubkey:[u8;32]` — the SDK's
+/// `EphemeralMembersArgs`, shared by create and update.
+fn private_members_data(discriminator: u64, members: &[Pubkey]) -> Vec<u8> {
+    let mut data = discriminator.to_le_bytes().to_vec();
+    data.push(1); // is_private = true
+    for member in members {
+        data.push(MEMBER_READ);
+        data.extend_from_slice(member.as_ref());
+    }
+    data
+}
+
+/// A PRIVATE **ephemeral** (ER-only) permission on `permissioned`, naming `members`. ER-only:
+/// `payer` (a PDA) fronts the ephemeral rent — no basenet account, nothing to delegate or commit.
+/// `permissioned` and `payer` both sign via their seeds. Account order and data layout are the
+/// SDK's `CreateEphemeralPermission` (disc 6).
+pub fn create_ephemeral_permission(
+    payer: &AccountInfo,
+    permissioned: &AccountInfo,
+    permission: &AccountInfo,
+    vault: &AccountInfo,
+    magic_program: &AccountInfo,
+    members: &[Pubkey],
+    signers_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let data = private_members_data(CREATE_EPHEMERAL_PERMISSION, members);
+    invoke_signed(
+        &Instruction {
+            program_id: PERMISSION_PROGRAM_ID,
+            accounts: vec![
+                AccountMeta::new(*payer.address(), true),
+                AccountMeta::new_readonly(*permissioned.address(), true),
+                AccountMeta::new(*permission.address(), false),
+                AccountMeta::new(*vault.address(), false),
+                AccountMeta::new_readonly(*magic_program.address(), false),
+            ],
+            data,
+        },
+        &[*payer, *permissioned, *permission, *vault, *magic_program],
+        signers_seeds,
+    )
+}
+
+/// Replaces the members of a PRIVATE ephemeral permission with `members`. The permissioned account
+/// authorises by signing (its seeds): its owning program is the permission's default authority.
+/// Account order is the SDK's `UpdateEphemeralPermission` (disc 7) with `authority_is_signer` false.
+pub fn update_ephemeral_permission(
+    payer: &AccountInfo,
+    permissioned: &AccountInfo,
+    permission: &AccountInfo,
+    vault: &AccountInfo,
+    magic_program: &AccountInfo,
+    members: &[Pubkey],
+    signers_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let data = private_members_data(UPDATE_EPHEMERAL_PERMISSION, members);
+    invoke_signed(
+        &Instruction {
+            program_id: PERMISSION_PROGRAM_ID,
+            accounts: vec![
+                AccountMeta::new(*payer.address(), true),
+                AccountMeta::new_readonly(*permissioned.address(), false), // authority
+                AccountMeta::new_readonly(*permissioned.address(), true),  // permissioned account
+                AccountMeta::new(*permission.address(), false),
+                AccountMeta::new(*vault.address(), false),
+                AccountMeta::new_readonly(*magic_program.address(), false),
+            ],
+            data,
+        },
+        &[*payer, *permissioned, *permissioned, *permission, *vault, *magic_program],
+        signers_seeds,
+    )
+}
+
+/// Whether a private ephemeral permission names exactly `members`, in order, with read flags.
+/// The ACL program seats the owning program first by default, so ours follow it. Layout:
+/// discriminator, bump, permissioned (32), private, then 33-byte `flags ++ pubkey` members.
+pub fn ephemeral_permission_matches(
+    permission: &AccountInfo,
+    members: &[Pubkey],
+) -> Result<bool, ProgramError> {
+    let data = permission.try_borrow()?;
+    if data.len() != 35 + 33 * (1 + members.len()) || data[34] != 1 {
+        return Ok(false);
+    }
+    Ok(members.iter().enumerate().all(|(i, member)| {
+        let at = 35 + 33 * (i + 1);
+        data[at] == MEMBER_READ && &data[at + 1..at + 33] == member.as_ref()
+    }))
+}
