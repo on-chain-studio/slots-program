@@ -16,14 +16,19 @@ import {
 } from './common.mjs';
 import { ROUTER } from './net.mjs';
 import { teeEndpoint, endpointHolding } from './tee-auth.mjs';
-import { TransactionInstruction, PublicKey } from '@solana/web3.js';
+import { TransactionInstruction, PublicKey, Keypair } from '@solana/web3.js';
+import fs from 'fs';
 
 const MACHINE = Number(process.argv[2]) || 0;
 const CLOSE = process.argv.includes('--close');
 const STAKE = 5_000_000;
-const BUDGET = STAKE * 4;   // enough for a spin with retries; deposits top up only the shortfall
+const BUDGET = Number(process.env.BUDGET) || STAKE * 4;   // top up only the shortfall; override for higher-stake machines
 
-const player = admin;
+// --player <keypair.json> plays as another key (a clean tester), else the admin.
+const pi = process.argv.indexOf('--player');
+const player = pi !== -1
+  ? Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(process.argv[pi + 1]))))
+  : admin;
 const er = connect(await teeEndpoint(player));
 const user = player.publicKey;
 

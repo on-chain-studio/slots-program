@@ -125,6 +125,7 @@ export const collectLedgers = betLedgers;
 export const resolveBetAccounts = (user) => [
   ro(configPda()), rw(housePda()), rw(spinPda(user)),
   rw(EPHEMERAL_VAULT), ro(MAGIC_PROGRAM), rw(analyticsPda()),
+  rw(permPda(spinPda(user))), ro(PERMISSION),
 ];
 
 export const requestRevealIx = (user) => new TransactionInstruction({
