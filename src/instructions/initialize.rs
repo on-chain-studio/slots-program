@@ -2,7 +2,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use crate::magicblock::create_permission;
 use crate::chain::*;
 
-use crate::constants::{is_admin, ADMIN_PUBKEYS, PERMISSION_PROGRAM, TREASURIES, VAULT_PROGRAM};
+use crate::constants::{is_admin, ANALYTICS_READERS, PERMISSION_PROGRAM, TREASURIES, VAULT_PROGRAM};
 use crate::error::GameError;
 use crate::state::analytics::{self, Analytics};
 use crate::state::config::{self, Config, INITIAL_MACHINES};
@@ -100,14 +100,14 @@ impl Initialize {
             a.version = analytics::VERSION;
         }
 
-        // The TEE permission: counters are the house's books, so only the admins may read the
-        // live copy. Both programs are members because the rollup admits an instruction that
+        // The TEE permission: counters are the house's books, so only the analytics readers may
+        // read the live copy. Both programs are members because the rollup admits an instruction that
         // touches a permissioned account only when the *invoked program* is a member — and the
         // settle that writes these counters is a vault instruction, exactly the reason every
         // ledger's permission names the vault and the game alike. Made once and never rewritten:
         // an update through the ACL program is not something this program does.
         let mut members = vec![*program_id, VAULT_PROGRAM];
-        members.extend(ADMIN_PUBKEYS);
+        members.extend(ANALYTICS_READERS);
         let seeds: &[&[u8]] = &[b"analytics", &[analytics_bump]];
         if permission.data_len() == 0 {
             create_permission(analytics_account, permission, initializer, system_program, &members, &[seeds])

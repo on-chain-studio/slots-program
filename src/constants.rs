@@ -1,7 +1,15 @@
 use crate::chain::*;
 
-/// Every key allowed to sign admin instructions: the dev key, and the mainnet ops key.
-pub const ADMIN_PUBKEYS: [Pubkey; 2] = [
+/// The only key allowed to sign admin instructions: the mainnet ops key, which is also the
+/// upgrade authority and so is kept private anyway. The dev key is handled like a hot wallet —
+/// it may read the books (see `ANALYTICS_READERS`) but it must never move or reprice anything.
+pub const ADMIN_PUBKEYS: [Pubkey; 1] = [
+    Pubkey::from_str_const("2wpqngzMS3CUu6LMaL6M3ykgBGPoXRwP4Ps8TLhx5FZH"),
+];
+
+/// Who may read the analytics counters on the TEE: the dev key (its token feeds the hosted
+/// analytics watcher) and the ops key.
+pub const ANALYTICS_READERS: [Pubkey; 2] = [
     Pubkey::from_str_const("691aFvKMnHXrMSgqk6G8izoCbVZTmkrRcu8xCeMKfPh1"),
     Pubkey::from_str_const("2wpqngzMS3CUu6LMaL6M3ykgBGPoXRwP4Ps8TLhx5FZH"),
 ];
