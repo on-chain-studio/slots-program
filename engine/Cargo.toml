@@ -10,6 +10,11 @@ std = []
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[dependencies]
+# `rng` only — no Pinocchio, no runtime. The program links the same crate with its `program`
+# feature on; both halves draw from one stream.
+casino-core = { git = "ssh://git@github.com/on-chain-studio/casino-core.git", default-features = false }
+
 [profile.release]
 opt-level = "z"
 lto = true

@@ -1,12 +1,12 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::magicblock::create_permission;
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::ids::PERMISSION_PROGRAM;
+use casino_core::{pda, permission, Casino, CoreError};
 
-use crate::constants::{is_admin, ANALYTICS_READERS, PERMISSION_PROGRAM, TREASURIES, VAULT_PROGRAM};
-use crate::error::GameError;
+use crate::constants::{ANALYTICS_READERS, TREASURIES};
 use crate::state::analytics::{self, Analytics};
 use crate::state::config::{self, Config, INITIAL_MACHINES};
-use crate::utils::pda;
+use crate::Slots;
 
 /// Creates `["config"]`, the house PDA and `["analytics"]`, and sets the machine count. Admin
 /// only, idempotent — re-running it after a `GrowConfig` must not shrink the shelf or re-create
@@ -14,7 +14,7 @@ use crate::utils::pda;
 ///
 /// The house is program-owned so it can be delegated to the rollup: it is the payer inside it,
 /// sponsoring each spin's ephemeral rent and the VRF. Analytics is delegated the same way, since
-/// the settle callbacks that write it run there; its TEE permission names the admins.
+/// the settle callbacks that write it run there; its TEE permission names the analytics readers.
 /// Accounts: [initializer, config, house, analytics, permission, permission_program,
 ///            system_program]
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -39,11 +39,9 @@ impl Initialize {
         // One account per `TREASURIES` seed, in order.
         let treasuries: [&AccountInfo; TREASURIES.len()] = [house];
 
-        if !initializer.is_signer() || !is_admin(initializer.address()) {
-            return Err(ProgramError::MissingRequiredSignature);
-        }
+        Slots::require_admin(initializer)?;
         if *permission_program.address() != PERMISSION_PROGRAM {
-            return Err(GameError::InvalidPDA.into());
+            return Err(CoreError::InvalidPDA.into());
         }
         let config_bump = pda::validate(program_id, config_account, &[b"config"])?;
 
@@ -106,13 +104,15 @@ impl Initialize {
         // settle that writes these counters is a vault instruction, exactly the reason every
         // ledger's permission names the vault and the game alike. Made once and never rewritten:
         // an update through the ACL program is not something this program does.
-        let mut members = vec![*program_id, VAULT_PROGRAM];
-        members.extend(ANALYTICS_READERS);
-        let seeds: &[&[u8]] = &[b"analytics", &[analytics_bump]];
-        if permission.data_len() == 0 {
-            create_permission(analytics_account, permission, initializer, system_program, &members, &[seeds])
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-        }
+        permission::set(
+            permission_program,
+            analytics_account,
+            &[b"analytics", &[analytics_bump]],
+            permission,
+            initializer,
+            system_program,
+            permission::members(program_id, &ANALYTICS_READERS),
+        )?;
 
         // Grow a short shelf up to the starting size, never shrink — it may hold live machines.
         // Rent must come with the growth or the resize fails the runtime's exemption check.
@@ -132,7 +132,7 @@ impl Initialize {
 
         let count = self.machine_count as u64;
         if count as usize > Config::capacity(config_account) {
-            return Err(GameError::ShelfFull.into());
+            return Err(CoreError::ShelfFull.into());
         }
 
         let c = Config::load_mut(config_account)?;
@@ -141,7 +141,7 @@ impl Initialize {
         c.authority = initializer.address().to_bytes();
         // Never shrinks: a machine someone can be mid-bet on must not vanish from under them.
         // Retiring one is a `SetMachine` that rewrites the slot, not a lower count.
-        c.machine_count = c.machine_count.max(count);
+        c.count = c.count.max(count);
 
         Ok(())
     }

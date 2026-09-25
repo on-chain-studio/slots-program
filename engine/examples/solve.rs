@@ -1,6 +1,6 @@
 //! Solves the shelf: strips per machine, held to the house targets under each mode's real
 //! maths — plain enumeration for lines, the optimal-play DP for hold, the shaded ladder riding
-//! on a lines machine for gamble. Writes ../scripts/machines.json for set-machines.mjs.
+//! on a lines machine for gamble. Writes ../scripts/machines.json for `slots-ops publish`.
 //!
 //!   cargo run --release --example solve
 //!

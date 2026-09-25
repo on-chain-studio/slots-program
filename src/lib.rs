@@ -1,30 +1,28 @@
 //! Slot Machines. The `#[program]` block below is the whole wire interface: every instruction, its
 //! number, its accounts in order and its arguments. What each one does lives in `instructions`.
+//!
+//! Everything below the game — the chain, the vault, MagicBlock, the VRF, the treasury
+//! instructions — is `casino-core`, shared with the other cabinets on the shelf rather than
+//! copied into this program. What is here is slots: the shelf of machines, the spin, and the
+//! decisions a player makes between its rounds.
 
 use solarium::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
 use solarium_program::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
 use solarium_program::{Account, Remaining, Signer};
 
-use crate::instructions::*;
+// Public, so a client generated from the block below finds its argument types where it names them.
+pub use casino_core::admin::*;
+pub use crate::instructions::*;
 
-pub mod chain;
 pub mod constants;
 pub mod error;
-pub mod magicblock;
 
 pub mod instructions {
     pub mod initialize;
     pub mod set_machine;
-    pub mod grow_config;
     pub mod close_spin;
-    pub mod delegation;
-    pub mod open_ledger;
-    pub mod delegate_treasury;
-    pub mod undelegate_treasury;
-    pub mod close_ledger;
-    pub mod authorize_treasury;
-    pub mod set_privacy;
-    pub mod withdraw_house;
 
     pub mod request_bet;
     pub mod resolve_bet;
@@ -39,18 +37,18 @@ pub mod instructions {
 pub mod state;
 
 pub mod utils {
-    pub mod pda;
     pub mod engine;
-    pub mod vrf;
-    pub mod vault;
-    pub mod receipt;
 }
 
 // Each discriminator is the little-endian u64 an instruction starts with, and they are the ones
 // this program has always had: dense, append-only, never reused — renumbering would silently
 // repoint old clients. 0 and 15 are answered by nothing (a retired slot and a reserved one), and
 // the settle and VRF callbacks are called back by these numbers, so they can no more move than
-// the rest. Accounts are taken in the order listed; any past the last are ignored.
+// the rest.
+//
+// 1–14 are the same numbers, for the same instructions, as the other games on the shelf: they are
+// all `casino-core`'s, and one set of operator tools (`casino-ops`) drives them all. Accounts are
+// taken in the order listed; any past the last are ignored.
 //
 // `Signer` stands only where the handler's first check was that very signature, so a refusal
 // still reads MissingRequiredSignature. The callbacks' authorities stay plain accounts: they are
@@ -88,7 +86,7 @@ impl Slots {
         system_program: &Account<'a>,
         args: delegation::Delegate,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<Slots>(
             payer.info.as_view(), pda.info.as_view(), owner_program.info.as_view(), buffer.info.as_view(), delegation_record.info.as_view(),
             delegation_metadata.info.as_view(), delegation_program.info.as_view(), system_program.info.as_view(),
         )?)
@@ -104,7 +102,7 @@ impl Slots {
         system_program: &Account<'a>,
         args: delegation::Undelegate,
     ) -> Result<()> {
-        Ok(args.process(delegated_pda.info.as_view(), buffer.info.as_view(), payer.info.as_view(), system_program.info.as_view())?)
+        Ok(args.process::<Slots>(delegated_pda.info.as_view(), buffer.info.as_view(), payer.info.as_view(), system_program.info.as_view())?)
     }
 
     #[instruction(discriminator = 4)]
@@ -116,7 +114,7 @@ impl Slots {
         magic_program: &Account<'a>,
         fees_vault: &mut Account<'a>,
     ) -> Result<()> {
-        Ok(delegation::RequestUndelegation.process(
+        Ok(delegation::RequestUndelegation.process::<Slots>(
             payer.info.as_view(), pda.info.as_view(), magic_context.info.as_view(), magic_program.info.as_view(), fees_vault.info.as_view(),
         )?)
     }
@@ -137,9 +135,11 @@ impl Slots {
         admin: &Signer<'a>,
         config: &mut Account<'a>,
         system_program: &Account<'a>,
-        args: grow_config::GrowConfig,
+        args: GrowConfig,
     ) -> Result<()> {
-        Ok(args.process(admin.info.as_view(), config.info.as_view(), system_program.info.as_view())?)
+        Ok(args.process::<Slots, state::config::MachineConfig, { state::config::VERSION }>(
+            admin.info.as_view(), config.info.as_view(), system_program.info.as_view(),
+        )?)
     }
 
     #[instruction(discriminator = 7)]
@@ -169,7 +169,7 @@ impl Slots {
         system_program: &Account<'a>,
         args: open_ledger::OpenLedger,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<Slots>(
             admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), permission.info.as_view(), permission_program.info.as_view(),
             vault_program.info.as_view(), system_program.info.as_view(),
         )?)
@@ -189,7 +189,7 @@ impl Slots {
         system_program: &Account<'a>,
         args: delegate_treasury::DelegateTreasury,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<Slots>(
             admin.info.as_view(), treasury.info.as_view(), buffer.info.as_view(), delegation_record.info.as_view(),
             delegation_metadata.info.as_view(), ledger.info.as_view(), vault_program.info.as_view(), delegation_program.info.as_view(),
             system_program.info.as_view(),
@@ -208,7 +208,7 @@ impl Slots {
         fees_vault: &mut Account<'a>,
         args: undelegate_treasury::UndelegateTreasury,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<Slots>(
             admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), vault_program.info.as_view(), magic_program.info.as_view(),
             magic_context.info.as_view(), fees_vault.info.as_view(),
         )?)
@@ -230,7 +230,7 @@ impl Slots {
         token_accounts: &Remaining<'a>,
         args: close_ledger::CloseLedger,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<Slots>(
             admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), reserve.info.as_view(), permission.info.as_view(),
             permission_program.info.as_view(), vault_program.info.as_view(), token_program.info.as_view(), system_program.info.as_view(),
             &token_accounts.iter().map(|account| *account.as_view()).collect::<Vec<_>>(),
@@ -246,7 +246,7 @@ impl Slots {
         vault_program: &Account<'a>,
         args: authorize_treasury::AuthorizeTreasury,
     ) -> Result<()> {
-        Ok(args.process(admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), vault_program.info.as_view())?)
+        Ok(args.process::<Slots>(admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), vault_program.info.as_view())?)
     }
 
     #[instruction(discriminator = 13)]
@@ -261,7 +261,7 @@ impl Slots {
         system_program: &Account<'a>,
         args: set_privacy::SetPrivacy,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<Slots>(
             admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), permission.info.as_view(), permission_program.info.as_view(),
             vault_program.info.as_view(), system_program.info.as_view(),
         )?)
@@ -277,7 +277,7 @@ impl Slots {
         vault_program: &Account<'a>,
         args: withdraw_house::WithdrawHouse,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<Slots>(
             admin.info.as_view(), house.info.as_view(), house_ledger.info.as_view(), admin_ledger.info.as_view(), vault_program.info.as_view(),
         )?)
     }
@@ -403,4 +403,5 @@ impl Slots {
             receipt.info.as_view(), vault_authority.info.as_view(), house.info.as_view(), spin.info.as_view(), ephemeral_vault.info.as_view(),
             magic_program.info.as_view(), analytics.info.as_view(),
         )?)
-    }}
+    }
+}

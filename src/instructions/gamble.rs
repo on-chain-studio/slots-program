@@ -1,10 +1,11 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::{pda, CoreError};
 
 use crate::error::GameError;
 use crate::state::config::MODE_GAMBLE;
 use crate::state::spin::{Spin, SpinStatus};
-use crate::utils::{engine, pda};
+use crate::utils::engine;
 
 /// Applies the seen result and commits the win to one more rung of the ladder. Signed by the
 /// player or the recorded consenter. Same ordering rule as `Hold`: the decision to risk it is on
@@ -35,12 +36,12 @@ impl Gamble {
 
         let key = signer.address().to_bytes();
         if key != spin.user && key != spin.consenter {
-            return Err(GameError::Unauthorized.into());
+            return Err(CoreError::Unauthorized.into());
         }
         pda::validate(program_id, spin_account, &[b"spin", spin.user.as_ref()])?;
 
         if terms.mode != MODE_GAMBLE {
-            return Err(GameError::WrongStatus.into());
+            return Err(CoreError::WrongStatus.into());
         }
         if spin.status != SpinStatus::Rolled as u64 {
             return Err(GameError::NotRolled.into());
@@ -54,7 +55,7 @@ impl Gamble {
             let stops = engine::spin(&terms, &spin.seed, 0, &spin.stops())?;
             let w = engine::value(&terms, &stops)?;
             if w.lamports == 0 {
-                return Err(GameError::NothingToCollect.into());
+                return Err(CoreError::NothingToCollect.into());
             }
             spin.set_stops(&stops);
             spin.pending = w.lamports;
@@ -66,7 +67,7 @@ impl Gamble {
                     .ok_or(ProgramError::ArithmeticOverflow)?;
             } else {
                 // Busted. Nothing rides, so there is nothing to put at risk again.
-                return Err(GameError::NothingToCollect.into());
+                return Err(CoreError::NothingToCollect.into());
             }
         }
 

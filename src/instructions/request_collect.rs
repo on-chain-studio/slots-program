@@ -1,10 +1,11 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::{pda, receipt, vault, CoreError};
 
 use crate::error::GameError;
 use crate::state::config::{MODE_GAMBLE, MODE_HOLD};
 use crate::state::spin::{Spin, SpinStatus};
-use crate::utils::{engine, pda, receipt, vault};
+use crate::utils::engine;
 
 /// Prices the finished spin and asks the vault to pay it. The session key fires this
 /// automatically — on a hold machine it also works mid-sequence, since collecting grid N equals
@@ -69,17 +70,17 @@ impl RequestCollect {
 
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
         if *house_ledger.address() != vault::ledger(house.address()) {
-            return Err(GameError::InvalidPDA.into());
+            return Err(CoreError::InvalidPDA.into());
         }
-        if *receipt_account.address() != receipt::address(wallet.address()) {
-            return Err(GameError::InvalidPDA.into());
+        if *receipt_account.address() != receipt::address(program_id, wallet.address()) {
+            return Err(CoreError::InvalidPDA.into());
         }
 
         let terms = *Spin::terms(spin_account)?;
         let amount = {
             let spin = Spin::load(spin_account)?;
             if spin.user != user.address().to_bytes() {
-                return Err(GameError::Unauthorized.into());
+                return Err(CoreError::Unauthorized.into());
             }
             if spin.status != SpinStatus::Rolled as u64 {
                 return Err(GameError::NotRolled.into());
@@ -97,7 +98,7 @@ impl RequestCollect {
                 _ => false,
             };
             if deciding && wallet.address().to_bytes() != spin.consenter {
-                return Err(GameError::Unauthorized.into());
+                return Err(CoreError::Unauthorized.into());
             }
             amount
         };

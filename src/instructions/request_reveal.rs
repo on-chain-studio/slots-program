@@ -1,9 +1,8 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::{pda, vrf, CoreError};
 
-use crate::error::GameError;
 use crate::state::spin::{Spin, SpinStatus};
-use crate::utils::{pda, vrf};
 
 /// Asks the VRF for this round's seed. Permissionless and retryable (from `Bought` *or*
 /// `Requested`), so a dropped oracle callback cannot strand a paid bet — anyone may re-fire it,
@@ -35,12 +34,12 @@ impl RequestReveal {
         let round = {
             let spin = Spin::load_mut(spin_account)?;
             if spin.user != user.address().to_bytes() {
-                return Err(GameError::Unauthorized.into());
+                return Err(CoreError::Unauthorized.into());
             }
             if spin.status != SpinStatus::Bought as u64
                 && spin.status != SpinStatus::Requested as u64
             {
-                return Err(GameError::WrongStatus.into());
+                return Err(CoreError::WrongStatus.into());
             }
             spin.status = SpinStatus::Requested as u64;
             spin.round

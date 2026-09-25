@@ -1,20 +1,18 @@
-use crate::chain::*;
+//! This game's half of the shared `Custom(n)` space. `casino_core::CoreError` owns 1–3, 5–7 and
+//! 9–11; 4 and 8 are left to each game to name, and 12 up are its own.
+
+use casino_core::chain::*;
 
 #[derive(Debug)]
 #[repr(u32)]
 pub enum GameError {
-    InvalidPDA         = 1,
-    Unauthorized       = 2,
-    AlreadyInitialized = 3,
+    /// No such machine on the shelf, or one the engine refuses to play.
     InvalidMachine     = 4,
-    WrongStatus        = 5,
-    InsufficientFunds  = 6,
-    InvalidMint        = 7,
+    /// The randomness for this round has not landed yet.
     NotRolled          = 8,
-    NothingToCollect   = 9,
-    NotPaid            = 10,
-    ShelfFull          = 11,
+    /// Every round this machine offers has been played: collect, don't hold or climb again.
     RoundsExhausted    = 12,
+    /// A hold names a reel this machine does not have.
     InvalidHold        = 13,
 }
 

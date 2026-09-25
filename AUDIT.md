@@ -10,6 +10,10 @@ of the hunt is recorded so it isn't re-run.
 > not cover the vault beyond that, the VRF oracle, the delegation program's processor, or the
 > enclave — trusted as documented.
 
+> Since then the code below the game has moved to `casino-core`, unchanged in what it does:
+> `chain.rs`, `magicblock.rs`, `receipt.rs`, `vault.rs` and `vrf.rs` below are its files now
+> (`casino-core/src/`), the Magic-program pin of the fix included.
+
 ---
 
 ## The one real finding

@@ -1,13 +1,12 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::{pda, vrf, CoreError};
 
-use crate::error::GameError;
 use crate::state::spin::{Spin, SpinStatus};
-use crate::utils::{pda, vrf};
 
-/// The VRF oracle's answer: 32 bytes of randomness signed by the VRF identity, written onto the
-/// spin as this round's pending seed. Applying it — turning it into reels, a flip, a payout — is
-/// the round instruction's job, not this one's.
+/// The VRF oracle's answer: 32 bytes of randomness signed by the VRF identity scoped to this
+/// program, written onto the spin as this round's pending seed. Applying it — turning it into
+/// reels, a flip, a payout — is the round instruction's job, not this one's.
 /// Accounts: [vrf_identity (signer), spin]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct CallbackReveal {
@@ -28,16 +27,16 @@ impl CallbackReveal {
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !vrf_identity.is_signer() || vrf_identity.address() != &vrf::callback_identity(program_id) {
+        if !vrf_identity.is_signer() || *vrf_identity.address() != vrf::scoped_identity(program_id) {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
         let spin = Spin::load_mut(spin_account)?;
         if spin.status != SpinStatus::Requested as u64 {
-            return Err(GameError::WrongStatus.into());
+            return Err(CoreError::WrongStatus.into());
         }
         if spin.round != self.round {
-            return Err(GameError::WrongStatus.into());
+            return Err(CoreError::WrongStatus.into());
         }
         // The VRF identity signs whatever request named it; bind the callback to this user's spin.
         pda::validate(program_id, spin_account, &[b"spin", spin.user.as_ref()])?;

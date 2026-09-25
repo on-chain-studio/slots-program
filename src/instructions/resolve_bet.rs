@@ -1,18 +1,17 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::magicblock::EPHEMERAL_VAULT_ID;
-use crate::magicblock::create_ephemeral_account;
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::ids::VAULT_PROGRAM;
+use casino_core::magicblock::{create_ephemeral_account, create_ephemeral_permission, EPHEMERAL_VAULT_ID, MEMBER_READ};
+use casino_core::{pda, receipt, CoreError};
 
-use crate::error::GameError;
 use crate::state::analytics::Analytics;
 use crate::state::spin::{self, Spin, SpinStatus};
 use crate::state::Config;
-use crate::utils::{pda, receipt};
 
 /// Turns a settled stake into a spin. The seed comes later via `RequestReveal`, so a failed VRF
 /// request cannot unwind a bet that is already paid for.
 /// Accounts: [receipt, vault_authority (signer), config, house, spin, ephemeral_vault,
-///            magic_program, analytics]
+///            magic_program, analytics, spin_permission, permission_program]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct ResolveBet {
     pub human: Pubkey,
@@ -42,7 +41,7 @@ impl ResolveBet {
         let program_id = &crate::ID;
 
         if *ephemeral_vault.address() != EPHEMERAL_VAULT_ID {
-            return Err(GameError::InvalidPDA.into());
+            return Err(CoreError::InvalidPDA.into());
         }
         pda::validate(program_id, config_account, &[b"config"])?;
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
@@ -56,10 +55,10 @@ impl ResolveBet {
         // spin is live fails here — and having failed, the vault's post-CPI assertion unwinds the
         // whole settle, so the player is not charged for a spin that was never created.
         if spin_account.data_len() != 0 {
-            return Err(GameError::AlreadyInitialized.into());
+            return Err(CoreError::AlreadyInitialized.into());
         }
 
-        let terms = *Config::machine(config_account, self.machine_id)?;
+        let terms = *Config::item(config_account, self.machine_id)?;
 
         create_ephemeral_account(
             house,
@@ -98,13 +97,15 @@ impl ResolveBet {
         // rewritten: an update through the ACL program drops the owning program from the list
         // and the rollup then refuses it for good. A permission is made once and left alone.
         if spin_permission.data_len() == 0 {
-            let members = [self.human, crate::constants::VAULT_PROGRAM];
+            // Readers get MEMBER_READ: everything but the authority to rewrite the list.
+            let members = [self.human, VAULT_PROGRAM];
             let signers: &[&[&[u8]]] = &[
                 &[b"house", &[house_bump]],
                 &[b"spin", self.human.as_ref(), &[spin_bump]],
             ];
-            crate::magicblock::create_ephemeral_permission(
-                house, spin_account, spin_permission, ephemeral_vault, magic_program, permission_program, &members, signers,
+            create_ephemeral_permission(
+                house, spin_account, spin_permission, ephemeral_vault, magic_program, permission_program, &members,
+                MEMBER_READ, signers,
             )?;
         }
 
@@ -113,7 +114,7 @@ impl ResolveBet {
         let a = Analytics::load_mut(analytics_account)?;
         a.lamports_in = a.lamports_in.saturating_add(terms.stake_lamports);
         if let Some(slot) = a.bets_placed.get_mut(self.machine_id as usize) {
-            Analytics::count(slot);
+            casino_core::analytics::count(slot);
         }
 
         Ok(())

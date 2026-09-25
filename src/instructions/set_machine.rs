@@ -1,11 +1,11 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::Zeroable;
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::{pda, Casino};
 
-use crate::constants::is_admin;
+use crate::Slots;
 use crate::error::GameError;
 use crate::state::config::*;
-use crate::utils::pda;
 
 /// The worst single bet the house will ever be asked to pay, as a multiple of the stake.
 ///
@@ -159,9 +159,7 @@ impl SetMachine {
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !admin.is_signer() || !is_admin(admin.address()) {
-            return Err(ProgramError::MissingRequiredSignature);
-        }
+        Slots::require_admin(admin)?;
         pda::validate(program_id, config_account, &[b"config"])?;
         self.validate()?;
 
@@ -177,7 +175,7 @@ impl SetMachine {
 
         // A machine written past the count publishes it. The count never shrinks.
         let c = Config::load_mut(config_account)?;
-        c.machine_count = c.machine_count.max(index as u64 + 1);
+        c.count = c.count.max(index as u64 + 1);
 
         Ok(())
     }

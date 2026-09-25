@@ -17,8 +17,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
     core::arch::wasm32::unreachable()
 }
 
-mod rng;
-pub use rng::{Rng, TOTAL};
+pub use casino_core::rng::{Rng, TOTAL};
 
 pub const MAX_REELS: usize = 5;
 pub const MAX_STRIP: usize = 32;

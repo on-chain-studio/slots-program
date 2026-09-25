@@ -1,9 +1,8 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::{pda, receipt, vault, CoreError};
 
-use crate::error::GameError;
 use crate::state::Config;
-use crate::utils::{pda, receipt, vault};
 
 /// Places a bet: a receipt for the whole stake, player → house. The settle callback creates the
 /// ephemeral `["spin", user]` with its terms copied from the shelf — so the bet exists if and
@@ -39,13 +38,13 @@ impl RequestBet {
         pda::validate(program_id, config_account, &[b"config"])?;
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
         if *house_ledger.address() != vault::ledger(house.address()) {
-            return Err(GameError::InvalidPDA.into());
+            return Err(CoreError::InvalidPDA.into());
         }
-        if *receipt_account.address() != receipt::address(wallet.address()) {
-            return Err(GameError::InvalidPDA.into());
+        if *receipt_account.address() != receipt::address(program_id, wallet.address()) {
+            return Err(CoreError::InvalidPDA.into());
         }
 
-        let machine = Config::machine(config_account, self.machine_id)?;
+        let machine = Config::item(config_account, self.machine_id)?;
         let stake = machine.stake_lamports;
         let mint = Pubkey::new_from_array(machine.mint);
 

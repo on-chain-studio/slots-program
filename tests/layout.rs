@@ -40,7 +40,7 @@ fn gold() -> SetMachine {
 fn the_stride_matches_the_engine() {
     assert_eq!(MACHINE_SIZE, slots_engine::MACHINE_BYTES);
     assert_eq!(MACHINE_SIZE, 344);
-    assert_eq!(std::mem::size_of::<Config>(), 56);
+    assert_eq!(Config::HEADER, 56);
     assert_eq!(std::mem::size_of::<slots::state::Spin>(), 160);
     // 24 header + 16+16 machine counters + 16 payout rows of 40.
     assert_eq!(std::mem::size_of::<slots::state::Analytics>(), 24 + 32 * 8 + 16 * 40);
@@ -92,7 +92,7 @@ fn a_second_machine_is_read_at_the_right_offset() {
 
 #[test]
 fn zeroed_bytes_are_not_a_playable_machine() {
-    // A grown shelf is zero-filled, and `machine_count` is what makes a slot playable. If a
+    // A grown shelf is zero-filled, and the header's `count` is what makes a slot playable. If a
     // zeroed slot ever parsed, growing the shelf would publish silent free machines.
     let empty = MachineConfig::zeroed();
     assert!(slots_engine::parse(bytemuck::bytes_of(&empty)).is_none());

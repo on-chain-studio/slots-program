@@ -9,6 +9,7 @@
 
 use bytemuck::Zeroable;
 use mollusk_svm::Mollusk;
+use pinocchio::error::ProgramError;
 use solana_account::Account;
 use solana_instruction::{error::InstructionError, AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
@@ -117,6 +118,10 @@ fn custom(error: GameError) -> Result<(), InstructionError> {
     Err(InstructionError::Custom(error as u32))
 }
 
+fn core(error: casino_core::CoreError) -> Result<(), InstructionError> {
+    Err(InstructionError::Custom(error as u32))
+}
+
 fn failure(error: InstructionError) -> Result<(), InstructionError> {
     Err(error)
 }
@@ -167,7 +172,7 @@ fn a_stranger_cannot_hold_someone_elses_spin() {
             (table.spin, table.spin_account(SpinStatus::Rolled, 0)),
         ],
     );
-    assert_eq!(result.raw_result, custom(GameError::Unauthorized));
+    assert_eq!(result.raw_result, core(casino_core::CoreError::Unauthorized));
 }
 
 #[test]
@@ -205,7 +210,10 @@ fn a_hold_missing_its_spin_is_refused_for_the_account() {
     let mut instruction = hold(table.user, true, table.spin, 0b001);
     instruction.accounts.truncate(1);
     let result = mollusk().process_instruction(&instruction, &[(table.user, wallet())]);
-    assert_eq!(result.raw_result, failure(InstructionError::NotEnoughAccountKeys));
+    // The runtime still reports this code as the deprecated `NotEnoughAccountKeys`, and a
+    // program has no way to return `MissingAccount`, so it is checked as the program raised it.
+    let error = result.raw_result.unwrap_err();
+    assert_eq!(ProgramError::try_from(error), Ok(ProgramError::NotEnoughAccountKeys));
 }
 
 #[test]
@@ -236,7 +244,7 @@ fn reveal(table: &Table, randomness: [u8; 32], round: u64, extra: &[u8]) -> Inst
         program(),
         &data,
         vec![
-            AccountMeta::new_readonly(key(slots::utils::vrf::callback_identity(&slots::ID).to_bytes()), true),
+            AccountMeta::new_readonly(key(casino_core::vrf::scoped_identity(&slots::ID).to_bytes()), true),
             AccountMeta::new(table.spin, false),
         ],
     )
@@ -246,7 +254,7 @@ fn reveal(table: &Table, randomness: [u8; 32], round: u64, extra: &[u8]) -> Inst
 #[ignore = "needs cargo build-sbf"]
 fn the_oracle_lands_its_seed_on_the_round_it_was_asked_for() {
     let table = Table::new();
-    let identity = key(slots::utils::vrf::callback_identity(&slots::ID).to_bytes());
+    let identity = key(casino_core::vrf::scoped_identity(&slots::ID).to_bytes());
     let result = mollusk().process_instruction(
         // Whatever the oracle appends after the round is not the program's business.
         &reveal(&table, [9; 32], 1, &[0xAA; 8]),
@@ -265,7 +273,7 @@ fn the_oracle_lands_its_seed_on_the_round_it_was_asked_for() {
 #[ignore = "needs cargo build-sbf"]
 fn a_late_answer_for_an_earlier_round_is_refused() {
     let table = Table::new();
-    let identity = key(slots::utils::vrf::callback_identity(&slots::ID).to_bytes());
+    let identity = key(casino_core::vrf::scoped_identity(&slots::ID).to_bytes());
     let result = mollusk().process_instruction(
         &reveal(&table, [9; 32], 0, &[]),
         &[
@@ -273,5 +281,5 @@ fn a_late_answer_for_an_earlier_round_is_refused() {
             (table.spin, table.spin_account(SpinStatus::Requested, 1)),
         ],
     );
-    assert_eq!(result.raw_result, custom(GameError::WrongStatus));
+    assert_eq!(result.raw_result, core(casino_core::CoreError::WrongStatus));
 }

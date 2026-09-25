@@ -1,5 +1,6 @@
 use bytemuck::{Pod, Zeroable};
-use crate::chain::*;
+use casino_core::analytics::PayoutRow;
+use casino_core::chain::*;
 
 pub const DISCRIMINATOR: u64 = 4;
 pub const VERSION:       u64 = 1;
@@ -9,13 +10,6 @@ pub const VERSION:       u64 = 1;
 /// dropped, because analytics must never be the reason a bet or a collect fails.
 pub const MACHINE_SLOTS: usize = 16;
 pub const TOKEN_SLOTS:   usize = 16;
-
-#[repr(C)]
-#[derive(Pod, Zeroable, Clone, Copy)]
-pub struct PayoutRow {
-    pub mint:   [u8; 32],
-    pub amount: u64,
-}
 
 /// `["analytics"]` — lifetime money counters. Written only by the settle callbacks, so every
 /// number is settled money rather than a request that might still fail. Delegated to the rollup
@@ -45,26 +39,5 @@ impl Analytics {
             .map(|r| unsafe { &mut *(r as *mut Self) })?;
         if s.version != 0 && s.version != VERSION { return Err(ProgramError::InvalidAccountData); }
         Ok(s)
-    }
-
-    /// Adds to a mint's lifetime payout, claiming the first free row for a mint not seen before.
-    /// SOL's row keeps the all-zero mint, which is also what an unclaimed row looks like — the
-    /// amount being set is what marks it claimed, so the match on mint runs first.
-    pub fn record_payout(&mut self, mint: &[u8; 32], amount: u64) {
-        for row in self.payouts.iter_mut() {
-            if row.mint == *mint {
-                row.amount = row.amount.saturating_add(amount);
-                return;
-            }
-            if row.amount == 0 && row.mint == [0u8; 32] {
-                row.mint = *mint;
-                row.amount = amount;
-                return;
-            }
-        }
-    }
-
-    pub fn count(slot: &mut u64) {
-        *slot = slot.saturating_add(1);
     }
 }

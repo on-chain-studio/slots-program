@@ -1,10 +1,11 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::{pda, CoreError};
 
 use crate::error::GameError;
 use crate::state::config::MODE_HOLD;
 use crate::state::spin::{Spin, SpinStatus};
-use crate::utils::{engine, pda};
+use crate::utils::engine;
 
 /// Applies the seen grid and commits which reels ride into the respin. Signed by the player or
 /// the recorded consenter — never permissionless, or a stranger could choose a victim's holds.
@@ -36,12 +37,12 @@ impl Hold {
 
         let key = signer.address().to_bytes();
         if key != spin.user && key != spin.consenter {
-            return Err(GameError::Unauthorized.into());
+            return Err(CoreError::Unauthorized.into());
         }
         pda::validate(program_id, spin_account, &[b"spin", spin.user.as_ref()])?;
 
         if terms.mode != MODE_HOLD {
-            return Err(GameError::WrongStatus.into());
+            return Err(CoreError::WrongStatus.into());
         }
         if spin.status != SpinStatus::Rolled as u64 {
             return Err(GameError::NotRolled.into());
