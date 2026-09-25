@@ -1,0 +1,29 @@
+[package]
+name = "slots-ops"
+version = "0.1.0"
+edition = "2021"
+description = "Operates Slot Machines: stands the program up, publishes and verifies the shelf, inspects it, and plays a spin on devnet — through the client Solarium generates from the program."
+publish = false
+
+# A workspace of its own. The program's `cargo build-sbf` and `cargo test` never see this crate —
+# tokio and an RPC client have no business in an SBF build — and its lockfile stays apart from
+# the program's.
+[workspace]
+
+[[bin]]
+name = "slots-ops"
+path = "src/main.rs"
+
+[dependencies]
+# The program, for its state types and its argument structs; the client is generated from it.
+slots = { path = "..", features = ["no-entrypoint"] }
+solarium-client = { git = "https://github.com/sensorial-systems/solarium", rev = "85f77a6ac12ea26a65b5e950a0f463e898399939" }
+casino-core = { git = "ssh://git@github.com/on-chain-studio/casino-core.git" }
+casino-ops = { git = "ssh://git@github.com/on-chain-studio/casino-ops.git" }
+
+anyhow = "1"
+bytemuck = "1"
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }

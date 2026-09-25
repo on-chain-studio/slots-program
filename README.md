@@ -2,13 +2,16 @@
 
 On-chain program for **Slot Machines**, sibling to `../scratch-cards-program` and in its exact
 shape: a native (non-Anchor) program on Pinocchio, through Solarium's `#[program]` dispatch (`src/lib.rs` is the
-whole wire interface, numbered as it always was), bytemuck state, `src/chain.rs` as the chain the program uses, and
-`src/magicblock.rs` as thin adapters over `ephemeral-rollups-pinocchio` — MagicBlock's own crate — for delegation,
-ephemeral accounts, permissions and VRF. Permissions are created once and never updated.
+whole wire interface, numbered as it always was), and bytemuck state. Everything below the game is
+`../casino-core`, shared with the other cabinets rather than copied here: the chain as the program uses it, the
+vault and its receipts, MagicBlock's delegation, ephemeral accounts, TEE permissions and VRF (through
+`ephemeral-rollups-pinocchio`, MagicBlock's own crate), the config shelf, and the admin instructions 2–4, 6 and
+8–14. Permissions are created once and never updated.
 
 Program id: `SLoTSdnmBH5KtNJjhEYw1MeWTKAfRnFfQTTcpgwRn2Q` (`~/keys/slots_program.json`) —
-live on devnet, upgrade authority `~/casino_admin.json`. Scripts pick the cluster with
-`--mainnet`; the admin key is casino_admin on both.
+live on devnet, upgrade authority casino_admin. `slots-ops` (below) picks the cluster with
+`--mainnet`; the admin key is casino_admin on both, and it is the only admin: the dev key reads the
+analytics and nothing more.
 
 ## Money
 
@@ -22,17 +25,22 @@ machines: **90% RTP** (scratch runs 80% + a 10% pot; there is no pot here). The 
 rungs are published **shaded at 48%** — part of the edge is taken on the flip, by the player's
 own choice; a rung above fair, or below the 45% typo floor, is unpublishable.
 
-## The three machines
+## The shelf
 
-| | mode | loop |
-| --- | --- | --- |
-| GOLD RUSH | `MODE_LINES` | spin, read 5 lines. No decisions. |
-| GRAVITY WELL | `MODE_HOLD` | three grids; between them the player commits which reels ride. |
-| LUCKY SPINS | `MODE_GAMBLE` | spin, then any win may be doubled up the ladder, rung by rung. |
+Two machines, each published at two stakes — RTP is a ratio, so the strips are shared and the
+stake only scales the payout:
+
+| id | machine | mode | stake | loop |
+| --- | --- | --- | --- | --- |
+| 0 | NEON NIGHTS | `MODE_LINES` | 0.005 | spin, read 5 lines. No decisions. |
+| 1 | GOLD RUSH | `MODE_LINES` | 0.05 | the same maths at the higher stake; x80 = 4 SOL is the shelf's top win. |
+| 2 | GRAVITY WELL | `MODE_HOLD` | 0.005 | three grids; between them the player commits which reels ride. |
+| 3 | BLACK HOLE | `MODE_HOLD` | 0.05 | the same maths at the higher stake. |
 
 The volatility profiles follow the *mechanics*, not the themes: holding well multiplies a pay
-table's return several-fold (enumerated, not estimated), so GRAVITY WELL is structurally the
-frequent-hits machine and LUCKY SPINS the volatile one. The two can never share a pay table.
+table's return several-fold (enumerated, not estimated), so the hold machines are structurally the
+frequent-hits ones. The gamble ladder (`MODE_GAMBLE`) is no longer on the shelf; the program and
+the engine still play it.
 
 ## Accounts
 
@@ -40,7 +48,7 @@ frequent-hits machine and LUCKY SPINS the volatile one. The two can never share 
 | --- | --- |
 | `["config"]` | The shelf: every machine's strips, lines and pay table — all public. Grows, never shrinks. |
 | `["house"]` | Payer inside the rollup (spin rent + VRF); owns the house ledger (the payout float). Delegated. |
-| `["analytics"]` | Lifetime counters, written only by settle callbacks — every number is settled money. Delegated; TEE reads restricted to the admins. |
+| `["analytics"]` | Lifetime counters, written only by settle callbacks — every number is settled money. Delegated; TEE reads restricted to the analytics readers (the ops key and the dev key). |
 | `["spin", user]` | One bet in flight, **ephemeral** — created by the stake's settle callback, closed by the payout's. Its existence is the one-bet-at-a-time mutex and the unpaid flag. Carries its own terms, copied at purchase. |
 
 ## The flow
@@ -74,24 +82,45 @@ independent per reel, three consecutive positions visible. Odds are emergent, so
 DP over hold masks. Nothing is sampled.
 
 `examples/solve.rs` is the balancing tool: hill-climbs counts and multipliers against the exact
-enumerator and writes `scripts/machines.json`. Republishing is `set-machines.mjs`;
-`verify-machines.mjs` reads every field back off the chain and is the only proof a publish landed.
+enumerator and writes `scripts/machines.json`. Republishing is `slots-ops publish`;
+`slots-ops verify` reads every machine back off the chain, byte for byte, and is the only proof a
+publish landed.
 
 ## Build & test
 
 ```
 cargo build-sbf                      # target/deploy/slots.so
 cargo test                           # program: layout + wire pins, SetMachine validation
-SBF_OUT_DIR=$PWD/target/deploy cargo test --test program -- --ignored
+cargo test --test program -- --ignored
                                      # the built .so run in Mollusk: dispatch, refusals, hold, VRF
 (cd engine && cargo test --release)  # engine: determinism, RTP enumeration, hold DP, parity
 ```
 
-## Scripts
+## Operating it
+
+`cli/` is `slots-ops`, the operator's tool. Every instruction it sends is built by the client
+Solarium generates from the `#[program]` block in `src/lib.rs`, and every account it reads is cast
+into the program's own state types; what every game's tooling shares — the clusters, the admin
+key, the TEE login, the treasury instructions, moving between rollups — is
+[`casino-ops`](https://github.com/on-chain-studio/casino-ops). It is a workspace of its own, so
+`cargo build-sbf` and `cargo test` here never build it.
 
 ```
-node scripts/setup-slots.mjs         # initialize, open + float the house ledger, delegate
-node scripts/set-machines.mjs        # publish machines.json
-node scripts/verify-machines.mjs     # must say: the chain matches machines.json exactly
-node scripts/play-slots.mjs [0|1|2]  # one real spin end to end (--close reclaims the ledger)
+cd cli
+cargo run -- setup                   # initialize, open + float the house ledger (5 SOL on mainnet, 1 on devnet), delegate
+cargo run -- publish                 # publish scripts/machines.json (machines already on chain are skipped)
+cargo run -- verify                  # must say: the chain matches the sheet exactly
+cargo run -- play [0|1|2|3]          # one real spin end to end, as the machine's mode plays (--close reclaims the ledger)
+cargo run -- clear-ledger <wallet>   # empty and close a wallet's ledger, permission and session store
+cargo run -- status [player]         # where every account is, what the ledgers hold
+cargo run -- shelf | analytics | spin [player]
+cargo run -- grow-shelf [n] | move <tee|er> | float <sol> | where | help
 ```
+
+Devnet unless `--mainnet`; the TEE unless `--public` (the public ER shows every failed
+transaction's logs). The admin key is `--keypair`, `$CASINO_ADMIN_KEYPAIR` (the shared keys folder's
+`~/keys/casino_admin.json`, say), or the Solana CLI's own. `play` plays as that key unless
+`--wallet` names another keypair, with a session key the vault authorizes for the run, the way the
+browser client plays; a spin an interrupted run left behind is played out and collected first.
+`move tee` is how the house, the analytics and the house ledger come home from another validator
+and go to the TEE.
