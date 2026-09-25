@@ -28,7 +28,7 @@ use casino_ops::magicblock::{EPHEMERAL_VAULT, MAGIC_PROGRAM};
 use casino_ops::ops::Setup;
 use casino_ops::vault::SYSTEM_PROGRAM;
 use casino_ops::{
-    keys, lamports, short, sol, AccountMeta, AdminCommand, Chain, Game, Instruction, Keypair, Net, Ops, Player, Pubkey, Signer,
+    keys, lamports, short, sol, AdminCommand, Chain, Game, Instruction, Keypair, Net, Ops, Player, Pubkey, Signer,
 };
 use clap::{Parser, Subcommand};
 use slots::instructions::{close_spin::CloseSpin, initialize::Initialize};
@@ -293,15 +293,6 @@ async fn main() -> Result<()> {
     }
 }
 
-/// The vault's `close_ledger` for a wallet's own ledger, its session store named after the rest:
-/// the vault closes the store with the ledger when it is passed. The ledger is the only thing the
-/// store serves, so a wallet cleared without it would leave rent stranded in an orphan.
-fn close_own_ledger(owner: &Pubkey) -> Instruction {
-    let mut close = casino_ops::vault::close_own_ledger(owner);
-    close.accounts.push(AccountMeta::new(casino_ops::vault::session_store(owner), false));
-    close
-}
-
 async fn clear_ledger(chain: &Chain, wallet: &Keypair) -> Result<()> {
     let player = Player::new(chain, wallet, slots::ID);
     let owner = player.key();
@@ -314,7 +305,7 @@ async fn clear_ledger(chain: &Chain, wallet: &Keypair) -> Result<()> {
     // Home from wherever it is in session, and every mint it holds back in the wallet.
     let withdrawn = player.withdraw_all().await?;
     println!("  ✅ home, withdrew {} SOL", sol(withdrawn));
-    chain.base.send(&[close_own_ledger(&owner)], &[wallet]).await?;
+    chain.base.send(&[casino_ops::vault::close_own_ledger(&owner)], &[wallet]).await?;
     let store = casino_ops::vault::session_store(&owner);
     let gone = chain.account(&player.ledger_key()).await?.is_none() && chain.account(&store).await?.is_none();
     let after = chain.balance(&owner).await?;
@@ -446,7 +437,7 @@ mod tests {
     fn a_cleared_ledger_closes_its_session_store() {
         let owner = Pubkey::new_from_array([7; 32]);
         let ledger = casino_ops::vault::ledger(&owner);
-        let ix = close_own_ledger(&owner);
+        let ix = casino_ops::vault::close_own_ledger(&owner);
         let keys: Vec<Pubkey> = ix.accounts.iter().map(|m| m.pubkey).collect();
         assert_eq!(
             keys,

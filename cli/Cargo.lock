@@ -7469,18 +7469,6 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "blackjack"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "blackjack-engine"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "page"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "scratch-cards"
 version = "0.1.0"
 
@@ -7494,4 +7482,16 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "video-bingo"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "blackjack"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "blackjack-engine"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "page"
 version = "0.1.0"
