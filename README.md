@@ -49,7 +49,7 @@ the engine still play it.
 | `["config"]` | The shelf: every machine's strips, lines and pay table — all public. Grows, never shrinks. |
 | `["house"]` | Payer inside the rollup (spin rent + VRF); owns the house ledger (the payout float). Delegated. |
 | `["analytics"]` | Lifetime counters, written only by settle callbacks — every number is settled money. Delegated; TEE reads restricted to the analytics readers (the ops key and the dev key). |
-| `["spin", user]` | One bet in flight, **ephemeral** — created by the stake's settle callback, closed by the payout's. Its existence is the one-bet-at-a-time mutex and the unpaid flag. Carries its own terms, copied at purchase. |
+| `["spin", user]` | The player's bet, **ephemeral** and reused: created by the first stake's settle callback, marked collected by the payout's. A new bet needs a collected spin. Carries its own terms, copied at purchase, and a generation that rejects VRF answers meant for an earlier bet. |
 
 ## The flow
 
@@ -57,7 +57,7 @@ the engine still play it.
 RequestBet ─ settle ─▶ spin exists (Bought)
 RequestReveal ──▶ Requested ── VRF callback ──▶ Rolled        (permissionless, retryable)
    Hold(mask) / Gamble ──▶ Bought (next round)                (player/consenter-signed)
-RequestCollect ─ settle ─▶ paid, spin closed                  (a loss is an empty receipt)
+RequestCollect ─ settle ─▶ paid, spin Collected               (a loss is an empty receipt)
 ```
 
 The ordering *is* the security: `Hold` and `Gamble` are the only paths that advance the round,

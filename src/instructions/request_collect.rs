@@ -11,10 +11,8 @@ use crate::utils::engine;
 /// automatically — on a hold machine it also works mid-sequence, since collecting grid N equals
 /// holding every reel and respinning, so stopping early forfeits nothing.
 ///
-/// Nothing about the spin is written here. A spin is collected when it is *gone* — the settle
-/// callback closes it — so asking for a payout leaves no state to strand. Load-bearing, exactly
-/// as it was for cards: a version that marked the spin spent would let anyone flip a stranger's
-/// finished spin and never settle, destroying the win and blocking that player for good.
+/// Only successful settlement marks the result collected. Marking it here would let an
+/// abandoned payout request consume a win without paying it.
 /// Accounts: [user, house, spin, receipt, ephemeral_vault, magic_program, vault_program,
 ///            wallet (signer), house_ledger, magic_context]
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -91,7 +89,7 @@ impl RequestCollect {
             // ride further — only the consenter may collect. Otherwise a stranger could
             // force-settle the current grid and rob the player of their remaining respins or
             // ladder climbs. Once nothing is left to decide, collect stays permissionless so an
-            // abandoned finished spin can still be cranked closed by anyone.
+            // abandoned finished spin can still be collected by anyone.
             let deciding = match terms.mode {
                 MODE_HOLD => spin.round + 1 < terms.rounds() as u64,
                 MODE_GAMBLE => amount > 0 && spin.round < terms.gamble_rungs as u64,
@@ -104,7 +102,7 @@ impl RequestCollect {
         };
 
         // A loss is an empty receipt: the settle moves nothing and still fires the callback,
-        // which is what closes the spin.
+        // which marks the result collected.
         let mut movements = Vec::new();
         if amount > 0 {
             movements.push(receipt::Movement {

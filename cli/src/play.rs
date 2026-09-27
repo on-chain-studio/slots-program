@@ -1,7 +1,7 @@
 //! One real spin on devnet, end to end, the way the browser client plays one: the player's ledger
 //! funded and in session on the rollup, a session key signing every move, the stake settled into a
 //! spin, the reels revealed round by round, a decision where the machine offers one, and the
-//! collect that pays and closes the spin.
+//! collect that pays it.
 
 use anyhow::{bail, Result};
 use casino_core::ids::{PERMISSION_PROGRAM, VAULT_PROGRAM, VRF_PROGRAM};
@@ -12,12 +12,13 @@ use casino_ops::{sol, Chain, Endpoint, Instruction, Keypair, Player, Pubkey, Sig
 use slots::instructions::request_collect::payout;
 use slots::instructions::{hold::Hold, request_bet::RequestBet, resolve_bet::ResolveBet, resolve_collect::ResolveCollect};
 use slots::state::config::{MachineConfig, MODE_GAMBLE, MODE_HOLD};
-use slots::state::spin::{self, Spin};
+use slots::state::spin::{self, Spin, SpinStatus};
 
 use crate::{analytics, config, generated, house, identity, spin_of, Slots};
 
-const BOUGHT: u64 = 0;
-const ROLLED: u64 = 2;
+const BOUGHT: u64 = SpinStatus::Bought as u64;
+const ROLLED: u64 = SpinStatus::Rolled as u64;
+const COLLECTED: u64 = SpinStatus::Collected as u64;
 /// `NothingToCollect`: a gamble on a base spin that won nothing.
 const NOTHING_TO_COLLECT: &str = "Custom(9)";
 
@@ -93,6 +94,9 @@ impl Round<'_, '_> {
         let wallet = self.player.wallet;
         let mut found = false;
         while let Some((spin, terms)) = self.spin_with_terms().await? {
+            if spin.status == COLLECTED {
+                break;
+            }
             found = true;
             if spin.status != ROLLED {
                 self.reveal("the leftover spin").await?;
@@ -131,7 +135,12 @@ impl Round<'_, '_> {
             ResolveCollect { human: user },
         ))?;
         self.player.play(&self.at, &[request, self.player.settle::<Slots>(resolve)]).await?;
-        self.player.until("the spin closing", async || Ok(self.spin().await?.is_none().then_some(()))).await
+        // Older programs close the spin instead.
+        self.player
+            .until("the spin collected", async || {
+                Ok(self.spin().await?.is_none_or(|s| s.status == COLLECTED).then_some(()))
+            })
+            .await
     }
 }
 

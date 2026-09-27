@@ -1,9 +1,10 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use casino_core::chain::*;
-use casino_core::ids::VAULT_PROGRAM;
-use casino_core::magicblock::{create_ephemeral_account, create_ephemeral_permission, EPHEMERAL_VAULT_ID, MEMBER_READ};
+use casino_core::magicblock::{create_ephemeral_account, EPHEMERAL_VAULT_ID, MEMBER_READ};
+use casino_core::permission;
 use casino_core::{pda, receipt, CoreError};
 
+use crate::constants::PRIVATE_CASINO;
 use crate::state::analytics::Analytics;
 use crate::state::spin::{self, Spin, SpinStatus};
 use crate::state::Config;
@@ -51,26 +52,29 @@ impl ResolveBet {
         let spin_bump = pda::validate(
             program_id, spin_account, &[b"spin", self.human.as_ref()],
         )?;
-        // The account's existence is the one-bet-at-a-time mutex: a second stake settling while a
-        // spin is live fails here — and having failed, the vault's post-CPI assertion unwinds the
-        // whole settle, so the player is not charged for a spin that was never created.
-        if spin_account.data_len() != 0 {
-            return Err(CoreError::AlreadyInitialized.into());
-        }
+        let (generation, previous_seed) = if spin_account.data_len() == 0 {
+            (1, [0; 32])
+        } else {
+            if !spin_account.owned_by(program_id) { return Err(ProgramError::IllegalOwner); }
+            let previous = *Spin::load(spin_account)?;
+            if previous.user != self.human.to_bytes() || previous.discriminator != spin::DISCRIMINATOR {
+                return Err(CoreError::Unauthorized.into());
+            }
+            if previous.status != SpinStatus::Collected as u64 { return Err(CoreError::AlreadyInitialized.into()); }
+            (Spin::generation(spin_account)?.checked_add(1).ok_or(ProgramError::ArithmeticOverflow)?, previous.seed)
+        };
 
         let terms = *Config::item(config_account, self.machine_id)?;
 
-        create_ephemeral_account(
-            house,
-            spin_account,
-            ephemeral_vault,
-            magic_program,
-            Spin::WITH_TERMS as u32,
-            &[
-                &[b"house", &[house_bump]],
-                &[b"spin", self.human.as_ref(), &[spin_bump]],
-            ],
-        )?;
+        if spin_account.data_len() != 0 && spin_account.data_len() < Spin::PERSISTENT_SIZE {
+            receipt::close(magic_program, house, spin_account, ephemeral_vault, house_bump)?;
+        }
+        if spin_account.data_len() == 0 {
+            create_ephemeral_account(house, spin_account, ephemeral_vault, magic_program,
+                Spin::PERSISTENT_SIZE as u32,
+                &[&[b"house", &[house_bump]], &[b"spin", self.human.as_ref(), &[spin_bump]]])?;
+        }
+        Spin::set_generation(spin_account, generation)?;
 
         {
             let s = Spin::load_mut(spin_account)?;
@@ -83,31 +87,16 @@ impl ResolveBet {
             s.round = 0;
             s.hold = 0;
             s.pending = 0;
+            s.stops = [0; 8];
+            s.seed = previous_seed;
         }
         Spin::write_terms(spin_account, &terms)?;
 
-        // Make the spin private on the TEE. A stranger can otherwise derive ["spin", user] and read
-        // the account and its entire signature history (every bet/reveal/collect, timestamped).
-        // Members: the player's wallet, whose own TEE token authorises the client's reads and
-        // subscriptions, and every program that is ever top-level over the spin in an ordinary
-        // transaction — a private-rollup account admits one only when its top-level program is a
-        // member: the vault (settle callbacks). The VRF oracle's callback is admitted without
-        // membership, like a crank, so the VRF program is not on the list. ER-only (house fronts the
-        // rent), never closed (closing would re-expose the not-yet-compressed history) and never
-        // rewritten: an update through the ACL program drops the owning program from the list
-        // and the rollup then refuses it for good. A permission is made once and left alone.
-        if spin_permission.data_len() == 0 {
-            // Readers get MEMBER_READ: everything but the authority to rewrite the list.
-            let members = [self.human, VAULT_PROGRAM];
-            let signers: &[&[&[u8]]] = &[
-                &[b"house", &[house_bump]],
-                &[b"spin", self.human.as_ref(), &[spin_bump]],
-            ];
-            create_ephemeral_permission(
-                house, spin_account, spin_permission, ephemeral_vault, magic_program, permission_program, &members,
-                MEMBER_READ, signers,
-            )?;
-        }
+        permission::upgrade_ephemeral(
+            program_id, permission_program, spin_account, &[b"spin", self.human.as_ref(), &[spin_bump]],
+            spin_permission, house, &[b"house", &[house_bump]], ephemeral_vault, magic_program,
+            spin_members(&self.human), MEMBER_READ,
+        )?;
 
         // This callback only fires on a settled stake, so the count is settled money.
         pda::validate(program_id, analytics_account, &[b"analytics"])?;
@@ -119,4 +108,8 @@ impl ResolveBet {
 
         Ok(())
     }
+}
+
+pub fn spin_members(human: &Pubkey) -> Vec<Pubkey> {
+    permission::ephemeral_members(&[*human, PRIVATE_CASINO])
 }

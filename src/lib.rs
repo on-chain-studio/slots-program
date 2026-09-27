@@ -32,6 +32,7 @@ pub mod instructions {
     pub mod gamble;
     pub mod request_collect;
     pub mod resolve_collect;
+    pub mod upgrade_permissions;
 }
 
 pub mod state;
@@ -402,6 +403,23 @@ impl Slots {
         Ok(args.process(
             receipt.info.as_view(), vault_authority.info.as_view(), house.info.as_view(), spin.info.as_view(), ephemeral_vault.info.as_view(),
             magic_program.info.as_view(), analytics.info.as_view(),
+        )?)
+    }
+
+    #[instruction(discriminator = 24)]
+    pub fn upgrade_permissions<'a>(
+        &self,
+        user: &Account<'a>,
+        spin: &Account<'a>,
+        permission: &mut Account<'a>,
+        house: &mut Account<'a>,
+        ephemeral_vault: &mut Account<'a>,
+        magic_program: &Account<'a>,
+        permission_program: &Account<'a>,
+    ) -> Result<()> {
+        Ok(upgrade_permissions::UpgradePermissions.process(
+            user.info.as_view(), spin.info.as_view(), permission.info.as_view(), house.info.as_view(),
+            ephemeral_vault.info.as_view(), magic_program.info.as_view(), permission_program.info.as_view(),
         )?)
     }
 }

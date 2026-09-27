@@ -221,7 +221,7 @@ fn a_hold_missing_its_spin_is_refused_for_the_account() {
 #[ignore = "needs cargo build-sbf"]
 fn numbers_nothing_answers_to_are_invalid_data() {
     let table = Table::new();
-    for unused in [0u64, 15, 24] {
+    for unused in [0u64, 15, 25] {
         let mut instruction = hold(table.user, true, table.spin, 0b001);
         instruction.data[..8].copy_from_slice(&unused.to_le_bytes());
         let result = mollusk().process_instruction(
@@ -240,7 +240,7 @@ fn numbers_nothing_answers_to_are_invalid_data() {
 }
 
 fn reveal(table: &Table, randomness: [u8; 32], round: u64, extra: &[u8]) -> Instruction {
-    let data = [&19u64.to_le_bytes()[..], &randomness, &round.to_le_bytes(), extra].concat();
+    let data = [&19u64.to_le_bytes()[..], &randomness, &round.to_le_bytes(), &0u64.to_le_bytes(), extra].concat();
     Instruction::new_with_bytes(
         program(),
         &data,

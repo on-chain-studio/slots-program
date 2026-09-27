@@ -176,6 +176,7 @@ fn the_wire_discriminators_never_move() {
     assert_eq!(ix::GAMBLE, 21);
     assert_eq!(ix::REQUEST_COLLECT, 22);
     assert_eq!(ix::RESOLVE_COLLECT, 23);
+    assert_eq!(ix::UPGRADE_PERMISSIONS, 24);
 }
 
 mod wire {
@@ -187,7 +188,7 @@ mod wire {
 
     #[test]
     fn the_retired_and_reserved_numbers_reach_nothing() {
-        for unused in [0, 15, 24, 255] {
+        for unused in [0, 15, 25, 255] {
             assert!(Slots::instruction(&input(unused, &[])).is_err(), "{unused} was answered");
         }
         assert!(Slots::instruction(&[20, 0, 0, 0]).is_err(), "a short tag was answered");
@@ -224,14 +225,14 @@ mod wire {
     }
 
     #[test]
-    fn the_oracle_answer_is_read_as_randomness_then_round() {
-        let arguments = [&[5u8; 32][..], &3u64.to_le_bytes()].concat();
+    fn the_oracle_answer_binds_round_and_bet_generation() {
+        let arguments = [&[5u8; 32][..], &3u64.to_le_bytes(), &4u64.to_le_bytes()].concat();
         let SlotsInstruction::CallbackReveal(reveal) =
             Slots::instruction(&input(19, &arguments)).unwrap()
         else {
             panic!("19 did not reach callback_reveal");
         };
-        assert_eq!((reveal.args.randomness, reveal.args.round), ([5; 32], 3));
+        assert_eq!((reveal.args.randomness, reveal.args.round, reveal.args.generation), ([5; 32], 3, 4));
     }
 
     #[test]

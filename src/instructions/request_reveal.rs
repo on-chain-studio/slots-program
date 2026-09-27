@@ -31,6 +31,7 @@ impl RequestReveal {
         let identity_bump = pda::validate(program_id, identity, &[b"identity"])?;
         pda::validate(program_id, spin_account, &[b"spin", user.address().as_ref()])?;
 
+        let generation = Spin::generation(spin_account)?;
         let round = {
             let spin = Spin::load_mut(spin_account)?;
             if spin.user != user.address().to_bytes() {
@@ -45,11 +46,13 @@ impl RequestReveal {
             spin.round
         };
 
-        // The round folded into the caller seed gives each round of the same spin its own
-        // entropy stream — the account key alone would repeat per round, and per bet.
+        // Unique per bet and round, so no request repeats an earlier input.
         let mut caller_seed = spin_account.address().to_bytes();
         for (i, b) in round.to_le_bytes().iter().enumerate() {
             caller_seed[i] ^= b;
+        }
+        for (i, b) in generation.to_le_bytes().iter().enumerate() {
+            caller_seed[8 + i] ^= b;
         }
 
         vrf::request_randomness(
@@ -62,11 +65,8 @@ impl RequestReveal {
                 is_signer: false,
                 is_writable: true,
             }],
-            // The round rides the callback so a stale callback from an earlier round is refused
-            // rather than landing as this round's seed. That matters here in a way it did not for
-            // scratch cards: the player *decides* between rounds, so an already-seen seed must
-            // never be allowed to become a later round's randomness.
-            round.to_le_bytes().to_vec(),
+            // Reject delayed answers from earlier bets or rounds.
+            [round.to_le_bytes(), generation.to_le_bytes()].concat(),
             &[b"house", &[house_bump]],
             true,
         )

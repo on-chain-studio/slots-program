@@ -15,13 +15,10 @@ pub enum SpinStatus {
     Requested = 1,
     /// The seed has landed and has not been applied yet. What the client renders from.
     Rolled    = 2,
-    // There is no Collected: a spin is collected when it is closed, so asking for a payout
-    // leaves no state anyone could strand. Same reasoning as the card.
+    Collected = 3,
 }
 
-/// `["spin", user]` — one bet in flight, ephemeral. Created by the settle callback that took the
-/// stake and closed by the one that pays it out, so its mere existence is the "one bet at a time"
-/// mutex: no nonce to store, and no rent standing against a player who never comes back.
+/// `["spin", user]` — reusable bet state. Collection retains the resolved result.
 ///
 /// Carries its own `terms`, copied from the shelf at purchase, so a rebalance cannot rewrite a
 /// bet someone already owns.
@@ -55,6 +52,22 @@ impl Spin {
 
     /// A bet placed with its terms printed after it.
     pub const WITH_TERMS: usize = Self::SIZE + size_of::<MachineConfig>();
+    pub const PERSISTENT_SIZE: usize = Self::WITH_TERMS + 8;
+
+    // After the terms, so existing offsets are unchanged.
+    pub fn generation(account: &AccountInfo) -> Result<u64, ProgramError> {
+        let data = account.try_borrow()?;
+        if data.len() == Self::WITH_TERMS { return Ok(0); }
+        let bytes = data.get(Self::WITH_TERMS..Self::PERSISTENT_SIZE).ok_or(ProgramError::InvalidAccountData)?;
+        Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
+    pub fn set_generation(account: &AccountInfo, generation: u64) -> ProgramResult {
+        let mut data = account.try_borrow_mut_data()?;
+        let bytes = data.get_mut(Self::WITH_TERMS..Self::PERSISTENT_SIZE).ok_or(ProgramError::InvalidAccountData)?;
+        bytes.copy_from_slice(&generation.to_le_bytes());
+        Ok(())
+    }
 
     pub fn stops(&self) -> [u8; MAX_REELS] {
         let mut s = [0u8; MAX_REELS];

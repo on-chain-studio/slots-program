@@ -16,6 +16,7 @@ pub struct CallbackReveal {
     /// arrive after the player has seen round N and committed round N+1 — and if the oracle
     /// re-derives the same bytes, land a *known* value as the next round's randomness.
     pub round: u64,
+    pub generation: u64,
 }
 
 impl CallbackReveal {
@@ -31,6 +32,9 @@ impl CallbackReveal {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
+        if Spin::generation(spin_account)? != self.generation {
+            return Err(CoreError::WrongStatus.into());
+        }
         let spin = Spin::load_mut(spin_account)?;
         if spin.status != SpinStatus::Requested as u64 {
             return Err(CoreError::WrongStatus.into());

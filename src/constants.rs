@@ -13,6 +13,9 @@ use crate::Slots;
 /// instruction, see `ADMINS` below.
 pub const ANALYTICS_READERS: [Pubkey; 2] = [DEV_KEY, OPS_KEY];
 
+/// The casino floor program. It is top-level over spins, so it must be a member of their permission.
+pub const PRIVATE_CASINO: Pubkey = Pubkey::from_str_const("EzQPZpLj8DccG7M7VCyr9kEm4wFLZi6pDGfxrAsLNz6z");
+
 /// Just the house. There is no progressive jackpot here: with no pot to feed, the whole return
 /// target lives in the machines themselves — 90% RTP, where scratch cards run 80% + 10% pot.
 pub const TREASURIES: [&[u8]; 1] = [b"house"];
