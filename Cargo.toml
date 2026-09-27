@@ -27,7 +27,7 @@ pinocchio = { version = "0.11.2", default-features = false, features = [
 borsh = { version = "1", features = ["derive"] }
 bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
 # The chain half every game here shares: the vault, MagicBlock, the treasury instructions.
-casino-core = { git = "ssh://git@github.com/on-chain-studio/casino-core.git" }
+casino-core = { git = "ssh://git@github.com/on-chain-studio/casino-core.git", rev = "5af2873b75ce16ab4372fce5899dc7f9af6d4339" }
 slots-engine = { path = "engine" }
 
 [profile.release]

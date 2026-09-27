@@ -609,6 +609,7 @@ dependencies = [
 [[package]]
 name = "casino-core"
 version = "0.1.0"
+source = "git+ssh://git@github.com/on-chain-studio/casino-core.git?rev=5af2873b75ce16ab4372fce5899dc7f9af6d4339#5af2873b75ce16ab4372fce5899dc7f9af6d4339"
 dependencies = [
  "borsh",
  "bytemuck",
@@ -4159,39 +4160,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[patch.unused]]
-name = "casino-ops"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "scratch-cards"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "scratch-engine"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "bingo-engine"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "video-bingo"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "blackjack"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "blackjack-engine"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "casino-web"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "page"
-version = "0.1.0"
