@@ -10,7 +10,9 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use slots::instructions::set_machine::{InitSymbol, SetMachine};
-use slots::state::config::{MachineConfig, GAMBLE_FAIR, MODE_GAMBLE, MODE_HOLD, MODE_LINES};
+use slots::state::config::{
+    MachineConfig, GAMBLE_FAIR, MODE_GAMBLE, MODE_HOLD, MODE_LINES, SHOWN_IN_ARCADE, SHOWN_IN_CASINO,
+};
 
 /// The five paylines every machine on the shelf pays: middle, top, bottom, and the two diagonals.
 pub const LINES: [[u8; 3]; 5] = [[1, 1, 1], [0, 0, 0], [2, 2, 2], [0, 1, 2], [2, 1, 0]];
@@ -29,6 +31,8 @@ pub struct Machine {
     pub win_pct: f64,
     pub mults: Vec<u16>,
     pub strips: Vec<Vec<u8>>,
+    /// Front ends that list the machine: "arcade", "casino".
+    pub shown_in: Vec<String>,
 }
 
 impl Machine {
@@ -38,6 +42,16 @@ impl Machine {
             "hold" => MODE_HOLD,
             "gamble" => MODE_GAMBLE,
             other => bail!("{}: no mode {other:?}", self.name),
+        })
+    }
+
+    pub fn shown_in(&self) -> Result<u32> {
+        self.shown_in.iter().try_fold(0, |bits, place| {
+            Ok(bits | match place.as_str() {
+                "arcade" => SHOWN_IN_ARCADE,
+                "casino" => SHOWN_IN_CASINO,
+                other => bail!("{}: no front end {other:?}", self.name),
+            })
         })
     }
 
@@ -61,6 +75,7 @@ impl Machine {
             strips: self.strips.clone(),
             symbols: self.mults.iter().map(|&mult| InitSymbol { mult, flags: 0 }).collect(),
             lines: LINES.iter().map(|line| line.to_vec()).collect(),
+            shown_in: self.shown_in()?,
         })
     }
 
@@ -100,6 +115,7 @@ pub fn differences(chain: &MachineConfig, want: &MachineConfig) -> Vec<String> {
     check("rungs", chain.gamble_rungs.to_string(), want.gamble_rungs.to_string());
     check("gamble win", chain.gamble_win.to_string(), want.gamble_win.to_string());
     check("mint", format!("{:?}", chain.mint), format!("{:?}", want.mint));
+    check("shown in", format!("{:#b}", chain.shown_in), format!("{:#b}", want.shown_in));
     for (r, (got, wanted)) in chain.strips.iter().zip(&want.strips).enumerate() {
         check(&format!("strip {r}"), format!("{got:?}"), format!("{wanted:?}"));
     }

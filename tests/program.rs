@@ -49,6 +49,7 @@ fn terms() -> MachineConfig {
             .map(|&mult| InitSymbol { mult, flags: 0 })
             .collect(),
         lines: vec![vec![1, 1, 1]],
+        shown_in: 0,
     }
     .build_for_test()
 }

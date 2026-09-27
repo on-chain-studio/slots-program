@@ -42,6 +42,7 @@ pub struct SetMachine {
     pub symbols:        Vec<InitSymbol>,
     /// One row index per reel, per line.
     pub lines:          Vec<Vec<u8>>,
+    pub shown_in:       u32,
 }
 
 const BAD: ProgramError = ProgramError::InvalidInstructionData;
@@ -137,6 +138,7 @@ impl SetMachine {
         m.gamble_rungs = if self.mode == MODE_GAMBLE { self.gamble_rungs } else { 0 };
         m.gamble_win = if self.mode == MODE_GAMBLE { self.gamble_win } else { GAMBLE_FAIR };
         m.mint = self.mint;
+        m.shown_in = self.shown_in;
         for (r, strip) in self.strips.iter().enumerate() {
             m.strips[r][..strip.len()].copy_from_slice(strip);
         }

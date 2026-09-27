@@ -319,15 +319,15 @@ fn main() {
     // The shelf, in on-chain id order: each solved machine at a low and a high stake. The `name`
     // is a label for the client (which supplies the theme); the chain carries only the math. Goal
     // 0 is the lines machine, goal 1 the hold machine.
-    let shelf: [(&str, usize, u64); 4] = [
-        ("NEON NIGHTS",  0,  5_000_000),
-        ("GOLD RUSH",    0, 50_000_000),
-        ("GRAVITY WELL", 1,  5_000_000),
-        ("BLACK HOLE",   1, 50_000_000),
+    let shelf: [(&str, usize, u64, &[&str]); 4] = [
+        ("NEON NIGHTS",  0,  5_000_000, &["arcade"]),
+        ("GOLD RUSH",    0, 50_000_000, &["arcade"]),
+        ("GRAVITY WELL", 1,  5_000_000, &["arcade"]),
+        ("BLACK HOLE",   1, 50_000_000, &["arcade"]),
     ];
 
     let mut out = String::from("[\n");
-    for (i, (label, goal, stake)) in shelf.iter().enumerate() {
+    for (i, (label, goal, stake, shown_in)) in shelf.iter().enumerate() {
         let g = &goals[*goal];
         let m = &solved[*goal];
         let strips: Vec<String> = (0..REELS)
@@ -335,13 +335,14 @@ fn main() {
             .collect();
         let mults: Vec<String> = m.symbols[..SYMS].iter().map(|s| s.mult.to_string()).collect();
         out.push_str(&format!(
-            "  {{ \"name\": \"{}\", \"mode\": \"{}\", \"stake\": {}, \"rounds\": {}, \"rungs\": 0, \"win_pct\": 50,\n    \"mults\": [{}],\n    \"strips\": [{}] }}{}\n",
+            "  {{ \"name\": \"{}\", \"mode\": \"{}\", \"stake\": {}, \"rounds\": {}, \"rungs\": 0, \"win_pct\": 50,\n    \"mults\": [{}],\n    \"strips\": [{}],\n    \"shown_in\": [{}] }}{}\n",
             label,
             if g.mode == MODE_HOLD { "hold" } else { "lines" },
             stake,
             if g.mode == MODE_HOLD { hold_rounds() } else { 1 },
             mults.join(","),
             strips.join(", "),
+            shown_in.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", "),
             if i + 1 < shelf.len() { "," } else { "" },
         ));
     }

@@ -19,6 +19,10 @@ pub const MODE_LINES:  u8 = 0;
 pub const MODE_HOLD:   u8 = 1;
 pub const MODE_GAMBLE: u8 = 2;
 
+/// `MachineConfig::shown_in` bits: which front ends list the machine.
+pub const SHOWN_IN_ARCADE: u32 = 1 << 0;
+pub const SHOWN_IN_CASINO: u32 = 1 << 1;
+
 /// A rung at exactly even odds. A published ladder may sit below this, never above.
 pub const GAMBLE_FAIR: u32 = 1 << 31;
 /// The worst a rung may be shaded to — 45%. Deeper than this is a typo, not an edge.
@@ -66,7 +70,8 @@ pub struct MachineConfig {
     pub gamble_rungs: u8,
     /// Chance a rung is won, out of 2^32.
     pub gamble_win:   u32,
-    pub _pad:         u32,
+    /// `SHOWN_IN_*` bits. Not read by the engine.
+    pub shown_in:     u32,
     /// What this machine bets and pays in. All-zero is native SOL.
     pub mint:    [u8; 32],
     /// Symbol index at each stop, per reel. Independent per reel.

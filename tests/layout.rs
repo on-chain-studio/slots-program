@@ -33,6 +33,7 @@ fn gold() -> SetMachine {
             .map(|&mult| InitSymbol { mult, flags: 0 })
             .collect(),
         lines: vec![vec![1, 1, 1], vec![0, 0, 0], vec![2, 2, 2], vec![0, 1, 2], vec![2, 1, 0]],
+        shown_in: 0,
     }
 }
 
