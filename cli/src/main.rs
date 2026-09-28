@@ -159,7 +159,7 @@ pub async fn machines_on_chain(chain: &Chain) -> Result<Vec<MachineConfig>> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let chain = Chain::new(&cli.net)?;
+    let chain = Chain::connect(&cli.net).await?;
     let admin = chain.admin.pubkey();
     match cli.command {
         Command::Setup { float, house_fund, slots } => {
