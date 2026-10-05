@@ -50,6 +50,7 @@ fn terms() -> MachineConfig {
             .collect(),
         lines: vec![vec![1, 1, 1]],
         shown_in: 0,
+        runs: None,
     }
     .build_for_test()
 }

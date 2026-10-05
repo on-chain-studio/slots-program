@@ -23,6 +23,16 @@ pub struct InitSymbol {
     pub flags: u8,
 }
 
+/// A run table: per line the reels it reads, per symbol what a run of each length pays.
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct InitRuns {
+    /// One per line, `(start, count)`.
+    pub spans: Vec<(u8, u8)>,
+    /// One per symbol, one entry per reel: entry `n` is a run of `n + 1`, so the first two stay
+    /// zero.
+    pub pays:  Vec<Vec<u16>>,
+}
+
 /// Writes one machine of the public shelf: its strips, its lines, its pay table. Admin only.
 /// One machine per transaction.
 /// Accounts: [admin (signer), config]
@@ -43,6 +53,9 @@ pub struct SetMachine {
     /// One row index per reel, per line.
     pub lines:          Vec<Vec<u8>>,
     pub shown_in:       u32,
+    /// Present, the machine pays runs along its lines by this table and `symbols[].mult` pays
+    /// nothing; absent, it pays complete lines.
+    pub runs:           Option<InitRuns>,
 }
 
 const BAD: ProgramError = ProgramError::InvalidInstructionData;
@@ -80,7 +93,19 @@ impl SetMachine {
             .all(|s| s.iter().all(|&i| (i as usize) < self.symbols.len())))?;
 
         // ── a machine that can never pay is a machine nobody should be sold
-        need(self.symbols.iter().any(|s| s.mult > 0))?;
+        let top = match &self.runs {
+            None => self.symbols.iter().map(|s| s.mult as u64).max().unwrap_or(0),
+            Some(runs) => {
+                need(runs.spans.len() == self.lines.len())?;
+                need(runs.spans.iter().all(|&(start, count)| {
+                    count >= 3 && start as usize + count as usize <= reels
+                }))?;
+                need(runs.pays.len() == self.symbols.len())?;
+                need(runs.pays.iter().all(|p| p.len() == reels && p[0] == 0 && p[1] == 0))?;
+                runs.pays.iter().flatten().map(|&p| p as u64).max().unwrap_or(0)
+            }
+        };
+        need(top > 0)?;
 
         // ── lines land on rows that are actually shown
         for l in &self.lines {
@@ -112,8 +137,8 @@ impl SetMachine {
         // ── what the house can be asked for
         //
         // Every line landing the top symbol at once is reachable: it is simply every reel showing
-        // it. So the worst bet is `stake × max_mult`, doubled once per ladder rung.
-        let top = self.symbols.iter().map(|s| s.mult as u64).max().unwrap_or(0);
+        // it. So the worst bet is `stake × max_mult`, doubled once per ladder rung. A line holds
+        // one run of three or more at most on five reels, so the same bound covers runs.
         let rungs = if self.mode == MODE_GAMBLE { self.gamble_rungs as u32 } else { 0 };
         let worst = top.checked_shl(rungs).ok_or(BAD)?;
         need(worst <= MAX_BET_MULTIPLE)?;
@@ -147,6 +172,15 @@ impl SetMachine {
         }
         for (i, l) in self.lines.iter().enumerate() {
             m.lines[i].rows[..l.len()].copy_from_slice(l);
+        }
+        if let Some(runs) = &self.runs {
+            m.match_rule = MATCH_RUNS;
+            for (i, &(start, count)) in runs.spans.iter().enumerate() {
+                m.spans[i] = Span { start, count };
+            }
+            for (s, pays) in runs.pays.iter().enumerate() {
+                m.run_pays[s][..pays.len()].copy_from_slice(pays);
+            }
         }
         m
     }

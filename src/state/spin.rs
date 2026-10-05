@@ -54,11 +54,20 @@ impl Spin {
     pub const WITH_TERMS: usize = Self::SIZE + size_of::<MachineConfig>();
     pub const PERSISTENT_SIZE: usize = Self::WITH_TERMS + 8;
 
+    /// The sizes before machines carried run rules (344-byte terms). A spin left at one of them
+    /// is closed and re-created at the current size on its next bet, which needs its generation.
+    const LEGACY_WITH_TERMS: usize = Self::SIZE + 344;
+    const LEGACY_PERSISTENT_SIZE: usize = Self::LEGACY_WITH_TERMS + 8;
+
     // After the terms, so existing offsets are unchanged.
     pub fn generation(account: &AccountInfo) -> Result<u64, ProgramError> {
         let data = account.try_borrow()?;
-        if data.len() == Self::WITH_TERMS { return Ok(0); }
-        let bytes = data.get(Self::WITH_TERMS..Self::PERSISTENT_SIZE).ok_or(ProgramError::InvalidAccountData)?;
+        let at = match data.len() {
+            Self::WITH_TERMS | Self::LEGACY_WITH_TERMS => return Ok(0),
+            Self::LEGACY_PERSISTENT_SIZE => Self::LEGACY_WITH_TERMS,
+            _ => Self::WITH_TERMS,
+        };
+        let bytes = data.get(at..at + 8).ok_or(ProgramError::InvalidAccountData)?;
         Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
     }
 

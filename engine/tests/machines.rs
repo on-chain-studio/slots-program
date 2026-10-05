@@ -271,41 +271,93 @@ fn parse_reads_back_what_the_account_holds() {
     const AT_STRIPS: usize = AT_MINT + 32;
     const AT_SYMBOLS: usize = AT_STRIPS + MAX_REELS * MAX_STRIP;
     const AT_LINES: usize = AT_SYMBOLS + MAX_SYMBOLS * 4;
-    assert_eq!(AT_LINES + MAX_LINES * MAX_REELS, MACHINE_BYTES);
+    const AT_MATCH: usize = AT_LINES + MAX_LINES * MAX_REELS;
+    const AT_SPANS: usize = AT_MATCH + 8;
+    const AT_RUN_PAYS: usize = AT_SPANS + MAX_LINES * 2;
+    assert_eq!(AT_RUN_PAYS + MAX_SYMBOLS * MAX_REELS * 2, MACHINE_BYTES);
 
-    let m = prototype_gold();
-    let mut bytes = vec![0u8; MACHINE_BYTES];
-    bytes[..8].copy_from_slice(&m.stake_lamports.to_le_bytes());
-    bytes[8] = m.mode;
-    bytes[9] = m.reel_count;
-    bytes[10] = m.strip_len;
-    bytes[11] = m.row_count;
-    bytes[12] = m.symbol_count;
-    bytes[13] = m.line_count;
-    bytes[14] = m.rounds;
-    bytes[15] = m.gamble_rungs;
-    bytes[16..20].copy_from_slice(&m.gamble_win.to_le_bytes());
-    // the mint at AT_MINT stays zero — SOL, and the engine never reads it
-    for r in 0..MAX_REELS {
-        for i in 0..MAX_STRIP {
-            bytes[AT_STRIPS + r * MAX_STRIP + i] = m.strips[r][i];
+    let lines = prototype_gold();
+    // The same machine paying runs: three-reel spans, so a run is the whole line and the two
+    // tables can be told apart only by which one the bytes say to read.
+    let mut runs = lines;
+    runs.match_rule = MATCH_RUNS;
+    for i in 0..runs.line_count as usize {
+        runs.runs.spans[i] = Span { start: 0, count: 3 };
+    }
+    for s in 0..runs.symbol_count as usize {
+        runs.runs.pays[s][2] = lines.symbols[s].mult * 2;
+    }
+    for m in [lines, runs] {
+        let mut bytes = vec![0u8; MACHINE_BYTES];
+        bytes[..8].copy_from_slice(&m.stake_lamports.to_le_bytes());
+        bytes[8] = m.mode;
+        bytes[9] = m.reel_count;
+        bytes[10] = m.strip_len;
+        bytes[11] = m.row_count;
+        bytes[12] = m.symbol_count;
+        bytes[13] = m.line_count;
+        bytes[14] = m.rounds;
+        bytes[15] = m.gamble_rungs;
+        bytes[16..20].copy_from_slice(&m.gamble_win.to_le_bytes());
+        // the mint at AT_MINT stays zero — SOL, and the engine never reads it
+        for r in 0..MAX_REELS {
+            for i in 0..MAX_STRIP {
+                bytes[AT_STRIPS + r * MAX_STRIP + i] = m.strips[r][i];
+            }
         }
-    }
-    for i in 0..MAX_SYMBOLS {
-        let at = AT_SYMBOLS + i * 4;
-        bytes[at..at + 2].copy_from_slice(&m.symbols[i].mult.to_le_bytes());
-        bytes[at + 2] = m.symbols[i].flags;
-    }
-    for i in 0..MAX_LINES {
-        let at = AT_LINES + i * MAX_REELS;
-        bytes[at..at + MAX_REELS].copy_from_slice(&m.lines[i].rows);
-    }
+        for i in 0..MAX_SYMBOLS {
+            let at = AT_SYMBOLS + i * 4;
+            bytes[at..at + 2].copy_from_slice(&m.symbols[i].mult.to_le_bytes());
+            bytes[at + 2] = m.symbols[i].flags;
+        }
+        for i in 0..MAX_LINES {
+            let at = AT_LINES + i * MAX_REELS;
+            bytes[at..at + MAX_REELS].copy_from_slice(&m.lines[i].rows);
+        }
+        bytes[AT_MATCH] = m.match_rule;
+        for i in 0..MAX_LINES {
+            bytes[AT_SPANS + i * 2] = m.runs.spans[i].start;
+            bytes[AT_SPANS + i * 2 + 1] = m.runs.spans[i].count;
+        }
+        for s in 0..MAX_SYMBOLS {
+            for n in 0..MAX_REELS {
+                let at = AT_RUN_PAYS + (s * MAX_REELS + n) * 2;
+                bytes[at..at + 2].copy_from_slice(&m.runs.pays[s][n].to_le_bytes());
+            }
+        }
 
-    let back = parse(&bytes).expect("valid machine rejected");
-    // The whole point of parse: same bytes, same spin, so the client and the chain cannot drift.
-    for i in 0..32u8 {
-        let seed = [i; 32];
-        assert_eq!(evaluate(&m, &seed).unwrap(), evaluate(&back, &seed).unwrap());
+        let back = parse(&bytes).expect("valid machine rejected");
+        assert_eq!(back.match_rule, m.match_rule);
+        // The whole point of parse: same bytes, same spin, so the client and the chain cannot drift.
+        let mut paid = 0;
+        for i in 0..64u8 {
+            let seed = [i; 32];
+            let w = evaluate(&m, &seed).unwrap();
+            assert_eq!(w, evaluate(&back, &seed).unwrap());
+            paid += w.lamports;
+        }
+        assert!(paid > 0, "no seed paid, so nothing was compared");
+        assert!(parse(&bytes[..MACHINE_BYTES - 1]).is_none(), "short account accepted");
     }
-    assert!(parse(&bytes[..MACHINE_BYTES - 1]).is_none(), "short account accepted");
+}
+
+#[test]
+fn a_runs_machine_pays_its_runs_through_value() {
+    // The program and the wasm only ever call `value`; the run table has to be reachable from it.
+    let mut c = MachineConfig {
+        stake_lamports: 900, reel_count: 5, strip_len: 3, row_count: 3, symbol_count: 2,
+        line_count: 1, match_rule: MATCH_RUNS, ..Default::default()
+    };
+    c.strips = [[0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; 5];
+    c.runs.spans[0] = Span { start: 0, count: 5 };
+    c.runs.pays[0] = [0, 0, 10, 30, 100];
+    assert_eq!(value(&c, &[1, 0, 0, 0, 1]).unwrap().lamports, 900 * 10);
+    assert_eq!(value(&c, &[1, 0, 0, 0, 0]).unwrap().lamports, 900 * 30);
+    assert_eq!(value(&c, &[0; 5]).unwrap(), value_runs(&c, &c.runs, &[0; 5]).unwrap().0);
+
+    c.runs.spans[0] = Span { start: 0, count: 2 };
+    assert!(value(&c, &[0; 5]).is_err(), "a span too short to hold a run was accepted");
+    c.runs.spans[0] = Span { start: 0, count: 5 };
+    c.match_rule = 2;
+    assert!(value(&c, &[0; 5]).is_err(), "an unknown match rule was accepted");
 }

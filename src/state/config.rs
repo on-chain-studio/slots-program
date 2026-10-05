@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use casino_core::shelf::Shelf;
 
 pub const DISCRIMINATOR: u64 = 1;
-pub const VERSION:       u64 = 1;
+pub const VERSION:       u64 = 2;
 
 /// Starting shelf size, not a ceiling — `GrowConfig` buys more room.
 pub const INITIAL_MACHINES: usize = 4;
@@ -18,6 +18,10 @@ pub const MAX_LINES:   usize = 16;
 pub const MODE_LINES:  u8 = 0;
 pub const MODE_HOLD:   u8 = 1;
 pub const MODE_GAMBLE: u8 = 2;
+
+/// `MachineConfig::match_rule`: complete lines, or runs of three or more along them.
+pub const MATCH_LINES: u8 = 0;
+pub const MATCH_RUNS:  u8 = 1;
 
 /// `MachineConfig::shown_in` bits: which front ends list the machine.
 pub const SHOWN_IN_ARCADE: u32 = 1 << 0;
@@ -49,6 +53,14 @@ pub struct Line {
     pub rows: [u8; MAX_REELS],
 }
 
+/// MATCH_RUNS: the reels a line reads, `count` of them from `start`. A run must fit inside it.
+#[repr(C)]
+#[derive(Pod, Zeroable, Clone, Copy, PartialEq, Debug)]
+pub struct Span {
+    pub start: u8,
+    pub count: u8,
+}
+
 /// One machine on the shelf: its strips, its lines, its pay table. The published odds, on-chain.
 ///
 /// The field order is the wire format — `slots_engine::parse` reads these bytes directly rather
@@ -78,6 +90,14 @@ pub struct MachineConfig {
     pub strips:  [[u8; MAX_STRIP]; MAX_REELS],
     pub symbols: [Symbol; MAX_SYMBOLS],
     pub lines:   [Line; MAX_LINES],
+    /// `MATCH_*`: which pay table a line is valued by.
+    pub match_rule: u8,
+    pub _pad:       [u8; 7],
+    /// MATCH_RUNS: per line, the reels it reads. Zero otherwise.
+    pub spans:      [Span; MAX_LINES],
+    /// MATCH_RUNS: per symbol, the multiplier on the line stake for a run of `n + 1`. Runs
+    /// under three never pay, so the first two are always zero. Zero otherwise.
+    pub run_pays:   [[u16; MAX_REELS]; MAX_SYMBOLS],
 }
 
 /// `["config"]` — the shelf: a `casino_core::shelf::Header`, then the MachineConfigs it publishes packed
@@ -92,7 +112,8 @@ const _: () = assert!(MACHINE_SIZE % 8 == 0);
 // Pin the sizes: a field reordered into a padding hole would change the stride and misread machines.
 const _: () = assert!(size_of::<Symbol>() == 4);
 const _: () = assert!(size_of::<Line>() == 5);
-const _: () = assert!(MACHINE_SIZE == 344);
+const _: () = assert!(size_of::<Span>() == 2);
+const _: () = assert!(MACHINE_SIZE == 504);
 // The engine reads this account's bytes; if the two ever disagree it reads a machine at the
 // wrong offset and deals a grid nobody published.
 const _: () = assert!(MACHINE_SIZE == slots_engine::MACHINE_BYTES);

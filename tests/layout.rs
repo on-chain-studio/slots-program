@@ -6,7 +6,7 @@
 //! nobody published. These tests are the thing standing in the way of that.
 
 use bytemuck::Zeroable;
-use slots::instructions::set_machine::{InitSymbol, SetMachine, MAX_BET_MULTIPLE};
+use slots::instructions::set_machine::{InitRuns, InitSymbol, SetMachine, MAX_BET_MULTIPLE};
 use slots::state::config::*;
 
 fn strip(pattern: &[u8], len: usize) -> Vec<u8> {
@@ -34,13 +34,48 @@ fn gold() -> SetMachine {
             .collect(),
         lines: vec![vec![1, 1, 1], vec![0, 0, 0], vec![2, 2, 2], vec![0, 1, 2], vec![2, 1, 0]],
         shown_in: 0,
+        runs: None,
+    }
+}
+
+/// Five reels paying runs: three rows across and six three-reel diagonals, each read only over
+/// its own span. Every reel the same `0 1 2 3` strip, so a stop of zero lines up whole rows.
+fn five() -> SetMachine {
+    let strip = strip(&[0, 1, 2, 3], 16);
+    let mut lines = vec![vec![0; 5], vec![1; 5], vec![2; 5]];
+    let mut spans = vec![(0, 5); 3];
+    for start in 0..3 {
+        for rows in [[0, 1, 2], [2, 1, 0]] {
+            let mut line = vec![1; 5];
+            line[start..start + 3].copy_from_slice(&rows);
+            lines.push(line);
+            spans.push((start as u8, 3));
+        }
+    }
+    SetMachine {
+        index: 0,
+        mode: MODE_LINES,
+        stake_lamports: 90_000_000,
+        row_count: 3,
+        rounds: 1,
+        gamble_rungs: 0,
+        gamble_win: GAMBLE_FAIR,
+        mint: [0u8; 32],
+        strips: vec![strip; 5],
+        symbols: (0..4).map(|_| InitSymbol { mult: 0, flags: 0 }).collect(),
+        lines,
+        shown_in: SHOWN_IN_CASINO,
+        runs: Some(InitRuns {
+            spans,
+            pays: (1..=4u16).map(|s| vec![0, 0, 9 * s, 27 * s, 90 * s]).collect(),
+        }),
     }
 }
 
 #[test]
 fn the_stride_matches_the_engine() {
     assert_eq!(MACHINE_SIZE, slots_engine::MACHINE_BYTES);
-    assert_eq!(MACHINE_SIZE, 344);
+    assert_eq!(MACHINE_SIZE, 504);
     assert_eq!(Config::HEADER, 56);
     assert_eq!(std::mem::size_of::<slots::state::Spin>(), 160);
     // 24 header + 16+16 machine counters + 16 payout rows of 40.
@@ -89,6 +124,63 @@ fn a_second_machine_is_read_at_the_right_offset() {
     assert_eq!(read_a.symbols[0].mult, 100);
     assert_eq!(read_b.symbols[0].mult, 77);
     assert_eq!(read_b.stake_lamports, 250_000_000);
+}
+
+#[test]
+fn a_runs_machine_is_paid_by_its_runs() {
+    let m = five();
+    m.validate().expect("the five-reel machine was rejected");
+    let built = m.build_for_test();
+    let parsed = slots_engine::parse(bytemuck::bytes_of(&built)).expect("engine rejected it");
+    assert_eq!(parsed.match_rule, slots_engine::MATCH_RUNS);
+    assert_eq!((parsed.runs.spans[3].start, parsed.runs.spans[3].count), (0, 3));
+    assert_eq!(parsed.runs.pays[2], [0, 0, 27, 81, 270]);
+
+    // A line's stake is a ninth of 0.09 SOL.
+    let line = 10_000_000;
+    // Stop zero: the three rows are five-runs of symbols 0, 1 and 2; no diagonal runs.
+    let w = slots_engine::value(&parsed, &[0; 5]).unwrap();
+    assert_eq!(w.lamports, line * (90 + 180 + 270));
+    assert_eq!(w.lines, 0b111);
+    // Knock the first reel out of line and every row becomes a four-run from the second reel.
+    let w = slots_engine::value(&parsed, &[1, 0, 0, 0, 0]).unwrap();
+    assert_eq!(w.lamports, line * (27 + 54 + 81));
+    // Two reels out, and the rows are three-runs over the last three.
+    let w = slots_engine::value(&parsed, &[1, 1, 0, 0, 0]).unwrap();
+    assert_eq!(w.lamports, line * (9 + 18 + 27));
+    // The middle reel out breaks every row into runs of two, which pay nothing.
+    assert_eq!(slots_engine::value(&parsed, &[0, 0, 1, 0, 0]).unwrap().lamports, 0);
+}
+
+#[test]
+fn nonsense_run_tables_are_refused() {
+    assert!(five().validate().is_ok());
+
+    let cases: [(&str, fn(&mut InitRuns)); 6] = [
+        ("a span missing for a line", |r| { r.spans.pop(); }),
+        ("a span too short to hold a run", |r| r.spans[3] = (0, 2)),
+        ("a span past the last reel", |r| r.spans[3] = (3, 3)),
+        ("a pay for a run of two", |r| r.pays[0][1] = 5),
+        ("a pay row the wrong length", |r| { r.pays[0].pop(); }),
+        ("no run that pays", |r| r.pays.iter_mut().flatten().for_each(|p| *p = 0)),
+    ];
+    for (name, break_it) in cases {
+        let mut m = five();
+        break_it(m.runs.as_mut().unwrap());
+        assert!(m.validate().is_err(), "accepted a run table with {name}");
+    }
+
+    // The worst bet is the top run on every line at once.
+    let mut m = five();
+    m.runs.as_mut().unwrap().pays[3][4] = u16::MAX;
+    assert!(m.validate().is_err(), "a run pay the house could never hold was accepted");
+
+    // Two collinear spans would pay one run twice. Only the engine sees that, so it is the
+    // parse that refuses it.
+    let mut m = five();
+    m.lines[3] = vec![1, 1, 1, 0, 0];
+    m.validate().expect("validate is not where overlap is caught");
+    assert!(slots_engine::parse(bytemuck::bytes_of(&m.build_for_test())).is_none());
 }
 
 #[test]

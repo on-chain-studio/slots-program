@@ -35,6 +35,11 @@ pub const MODE_HOLD: u8 = 1;
 /// Spin as `MODE_LINES`, then a win may be risked up the ladder, `gamble_rungs` times.
 pub const MODE_GAMBLE: u8 = 2;
 
+/// A line pays when every reel on it shows the same symbol, at that symbol's `mult`.
+pub const MATCH_LINES: u8 = 0;
+/// A line pays its longest run of three or more alike inside its span, by `runs.pays`.
+pub const MATCH_RUNS: u8 = 1;
+
 /// A fair rung: double or nothing at exactly even odds. `gamble_win` may sit below this — never
 /// above, or the ladder would pay the player to climb it.
 pub const GAMBLE_FAIR: u32 = 1 << 31;
@@ -76,6 +81,10 @@ pub struct MachineConfig {
     pub strips: [[u8; MAX_STRIP]; MAX_REELS],
     pub symbols: [Symbol; MAX_SYMBOLS],
     pub lines: [Line; MAX_LINES],
+    /// `MATCH_LINES` or `MATCH_RUNS`: which of the two pay tables a line is valued by.
+    pub match_rule: u8,
+    /// MATCH_RUNS: each line's span and the run pays. Ignored otherwise.
+    pub runs: RunRules,
 }
 
 impl Default for MachineConfig {
@@ -94,6 +103,8 @@ impl Default for MachineConfig {
             strips: [[0u8; MAX_STRIP]; MAX_REELS],
             symbols: [Symbol::default(); MAX_SYMBOLS],
             lines: [Line::default(); MAX_LINES],
+            match_rule: MATCH_LINES,
+            runs: RunRules::default(),
         }
     }
 }
@@ -186,7 +197,11 @@ impl MachineConfig {
                 }
             }
         }
-        Ok(())
+        match self.match_rule {
+            MATCH_LINES => Ok(()),
+            MATCH_RUNS => self.runs.fits(self),
+            _ => Err(BadMachine),
+        }
     }
 
     /// What one line stakes. The bet splits evenly across the paylines, so a machine's headline
@@ -228,7 +243,7 @@ pub fn spin(card: &MachineConfig, seed: &[u8; 32], hold: u8, prev: &Stops) -> Re
     Ok(out)
 }
 
-/// What a grid pays. A line pays when every reel shows the same symbol on that line's row.
+/// What a grid pays: complete lines, or runs along them, as the machine's `match_rule` says.
 pub fn value(card: &MachineConfig, stops: &Stops) -> Result<Winnings, BadMachine> {
     card.check()?;
     Ok(value_unchecked(card, stops))
@@ -237,6 +252,9 @@ pub fn value(card: &MachineConfig, stops: &Stops) -> Result<Winnings, BadMachine
 /// [value] without re-validating the machine — for the enumerator, which checks once and then
 /// asks eight thousand times.
 fn value_unchecked(card: &MachineConfig, stops: &Stops) -> Winnings {
+    if card.match_rule == MATCH_RUNS {
+        return runs::runs_unchecked(card, &card.runs, stops).0;
+    }
     let g = grid(card, stops);
     let stake = card.line_stake();
     let mut w = Winnings::default();
@@ -265,14 +283,18 @@ pub fn evaluate(card: &MachineConfig, seed: &[u8; 32]) -> Result<Winnings, BadMa
 /// The mint sits in the middle of it: this crate never reads it — a machine pays in one currency
 /// and the engine only ever counts base units — but the stride has to include it or every machine
 /// after the first would be read at the wrong offset.
-pub const MACHINE_BYTES: usize = 344;
+pub const MACHINE_BYTES: usize = 504;
 
 const AT_MINT: usize = 24;
 const AT_STRIPS: usize = AT_MINT + 32;
 const AT_SYMBOLS: usize = AT_STRIPS + MAX_REELS * MAX_STRIP;
 const AT_LINES: usize = AT_SYMBOLS + MAX_SYMBOLS * 4;
+const AT_MATCH: usize = AT_LINES + MAX_LINES * MAX_REELS;
+// Seven bytes of padding after the rule put the spans and the u16 pays on even offsets.
+const AT_SPANS: usize = AT_MATCH + 8;
+const AT_RUN_PAYS: usize = AT_SPANS + MAX_LINES * 2;
 
-const _: () = assert!(AT_LINES + MAX_LINES * MAX_REELS == MACHINE_BYTES);
+const _: () = assert!(AT_RUN_PAYS + MAX_SYMBOLS * MAX_REELS * 2 == MACHINE_BYTES);
 
 fn u16le(b: &[u8], at: usize) -> u16 {
     u16::from_le_bytes([b[at], b[at + 1]])
@@ -318,6 +340,16 @@ pub fn parse(b: &[u8]) -> Option<MachineConfig> {
         let at = AT_LINES + i * MAX_REELS;
         for r in 0..MAX_REELS {
             m.lines[i].rows[r] = b[at + r];
+        }
+    }
+    m.match_rule = b[AT_MATCH];
+    for i in 0..MAX_LINES {
+        let at = AT_SPANS + i * 2;
+        m.runs.spans[i] = Span { start: b[at], count: b[at + 1] };
+    }
+    for s in 0..MAX_SYMBOLS {
+        for n in 0..MAX_REELS {
+            m.runs.pays[s][n] = u16le(b, AT_RUN_PAYS + (s * MAX_REELS + n) * 2);
         }
     }
     m.check().ok()?;

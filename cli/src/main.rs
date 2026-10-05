@@ -394,6 +394,8 @@ mod tests {
                 want.extend_from_slice(&line);
             }
             want.extend_from_slice(&m.shown_in().unwrap().to_le_bytes());
+            // No run table: the arcade machines pay complete lines.
+            want.push(0);
             let admin = Pubkey::new_from_array([1; 32]);
             let ix = generated::Slots::set_machine_instruction(admin, config(), m.set_machine(index as u8).unwrap()).unwrap();
             assert_eq!(ix.data, want, "machine {index}");

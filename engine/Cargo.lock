@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "casino-core"
 version = "0.1.0"
-source = "git+ssh://git@github.com/on-chain-studio/casino-core.git?rev=5af2873b75ce16ab4372fce5899dc7f9af6d4339#5af2873b75ce16ab4372fce5899dc7f9af6d4339"
+source = "git+ssh://git@github.com/on-chain-studio/casino-core.git#5af2873b75ce16ab4372fce5899dc7f9af6d4339"
 
 [[package]]
 name = "itoa"

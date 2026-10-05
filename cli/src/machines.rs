@@ -9,12 +9,12 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
-use slots::instructions::set_machine::{InitSymbol, SetMachine};
+use slots::instructions::set_machine::{InitRuns, InitSymbol, SetMachine};
 use slots::state::config::{
     MachineConfig, GAMBLE_FAIR, MODE_GAMBLE, MODE_HOLD, MODE_LINES, SHOWN_IN_ARCADE, SHOWN_IN_CASINO,
 };
 
-/// The five paylines every machine on the shelf pays: middle, top, bottom, and the two diagonals.
+/// The five paylines a three-reel machine pays: middle, top, bottom, and the two diagonals.
 pub const LINES: [[u8; 3]; 5] = [[1, 1, 1], [0, 0, 0], [2, 2, 2], [0, 1, 2], [2, 1, 0]];
 /// Rows shown per reel.
 pub const ROWS: u8 = 3;
@@ -29,8 +29,18 @@ pub struct Machine {
     pub rungs: u8,
     /// A ladder rung's chance to win, in percent: 50 is fair, and the shelf shades it below.
     pub win_pct: f64,
+    /// What a complete line of each symbol pays. Empty on a machine that pays runs.
+    #[serde(default)]
     pub mults: Vec<u16>,
     pub strips: Vec<Vec<u8>>,
+    /// A row per reel for each payline, `null` on the reels a line does not read — so a line's
+    /// span is its run of rows. Absent, the machine pays [LINES].
+    #[serde(default)]
+    pub lines: Option<Vec<Vec<Option<u8>>>>,
+    /// Present, the machine pays runs of three or more along its lines instead of complete
+    /// lines: per symbol, one entry per reel, entry `n` paying a run of `n + 1`.
+    #[serde(default)]
+    pub run_pays: Option<Vec<Vec<u16>>>,
     /// Front ends that list the machine: "arcade", "casino".
     pub shown_in: Vec<String>,
 }
@@ -76,9 +86,46 @@ impl Machine {
         Ok(())
     }
 
+    /// Each line's rows, and the span of reels it reads. A reel outside the span sits on the
+    /// middle row: the engine never reads it, but it keeps two lines that differ only there from
+    /// looking like one.
+    fn lines(&self) -> Result<(Vec<Vec<u8>>, Vec<(u8, u8)>)> {
+        let Some(lines) = &self.lines else {
+            let all = (0, self.strips.len() as u8);
+            return Ok((LINES.iter().map(|line| line.to_vec()).collect(), vec![all; LINES.len()]));
+        };
+        let mut rows = Vec::new();
+        let mut spans = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            let read: Vec<usize> = (0..line.len()).filter(|&r| line[r].is_some()).collect();
+            let (Some(&start), Some(&end)) = (read.first(), read.last()) else {
+                bail!("{}: line {i} reads no reel", self.name);
+            };
+            if read.len() != end - start + 1 {
+                bail!("{}: line {i} skips a reel inside its span", self.name);
+            }
+            rows.push(line.iter().map(|r| r.unwrap_or(1)).collect());
+            spans.push((start as u8, read.len() as u8));
+        }
+        if self.run_pays.is_none() && spans.iter().any(|&(_, count)| count as usize != self.strips.len()) {
+            bail!("{}: a line that skips reels only pays runs, and the machine has no run pays", self.name);
+        }
+        Ok((rows, spans))
+    }
+
+    fn symbols(&self) -> Result<Vec<InitSymbol>> {
+        let mults = match &self.run_pays {
+            None => self.mults.clone(),
+            Some(_) if !self.mults.is_empty() => bail!("{}: a runs machine pays by `run_pays`, not `mults`", self.name),
+            Some(pays) => vec![0; pays.len()],
+        };
+        Ok(mults.into_iter().map(|mult| InitSymbol { mult, flags: 0 }).collect())
+    }
+
     /// The program's `SetMachine` for publishing this machine at `index`.
     pub fn set_machine(&self, index: u8) -> Result<SetMachine> {
         self.check_strips()?;
+        let (lines, spans) = self.lines()?;
         Ok(SetMachine {
             index,
             mode: self.mode()?,
@@ -90,9 +137,10 @@ impl Machine {
             // All-zero: native SOL.
             mint: [0; 32],
             strips: self.strips.clone(),
-            symbols: self.mults.iter().map(|&mult| InitSymbol { mult, flags: 0 }).collect(),
-            lines: LINES.iter().map(|line| line.to_vec()).collect(),
+            symbols: self.symbols()?,
+            lines,
             shown_in: self.shown_in()?,
+            runs: self.run_pays.clone().map(|pays| InitRuns { spans, pays }),
         })
     }
 
@@ -141,6 +189,13 @@ pub fn differences(chain: &MachineConfig, want: &MachineConfig) -> Vec<String> {
     }
     for (l, (got, wanted)) in chain.lines.iter().zip(&want.lines).enumerate() {
         check(&format!("line {l}"), format!("{:?}", got.rows), format!("{:?}", wanted.rows));
+    }
+    check("match rule", chain.match_rule.to_string(), want.match_rule.to_string());
+    for (l, (got, wanted)) in chain.spans.iter().zip(&want.spans).enumerate() {
+        check(&format!("span {l}"), format!("{got:?}"), format!("{wanted:?}"));
+    }
+    for (s, (got, wanted)) in chain.run_pays.iter().zip(&want.run_pays).enumerate() {
+        check(&format!("run pays {s}"), format!("{got:?}"), format!("{wanted:?}"));
     }
     // Anything the named fields do not cover — padding included — still counts.
     if out.is_empty() && bytemuck::bytes_of(chain) != bytemuck::bytes_of(want) {

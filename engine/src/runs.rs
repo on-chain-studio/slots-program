@@ -7,7 +7,8 @@ pub struct Span {
     pub count: u8,
 }
 
-/// Optional run payouts, independent of the legacy account format and full-line rules.
+/// Run payouts: what a machine with `MATCH_RUNS` pays instead of complete lines. Each line has a
+/// span of the reels it reads, and a run of three or more alike anywhere inside it pays.
 #[derive(Clone, Copy)]
 pub struct RunRules {
     pub spans: [Span; MAX_LINES],
@@ -29,6 +30,12 @@ pub struct RunWin {
 impl RunRules {
     pub fn check(&self, card: &MachineConfig) -> Result<(), BadMachine> {
         card.check()?;
+        self.fits(card)
+    }
+
+    /// The rules against an already-checked machine's shape — what `MachineConfig::check` asks of
+    /// its own rules, without checking the machine again.
+    pub(crate) fn fits(&self, card: &MachineConfig) -> Result<(), BadMachine> {
         for symbol in &self.pays { if symbol[0] != 0 || symbol[1] != 0 { return Err(BadMachine); } }
         for (i, span) in self.spans[..card.lines().len()].iter().enumerate() {
             if span.count < 3 || span.start as usize + span.count as usize > card.reels() { return Err(BadMachine); }
@@ -47,6 +54,10 @@ impl RunRules {
 /// Each maximal run pays once; crossing paylines remain independent wins.
 pub fn value_runs(card: &MachineConfig, rules: &RunRules, stops: &Stops) -> Result<(Winnings, [RunWin; MAX_LINES]), BadMachine> {
     rules.check(card)?;
+    Ok(runs_unchecked(card, rules, stops))
+}
+
+pub(crate) fn runs_unchecked(card: &MachineConfig, rules: &RunRules, stops: &Stops) -> (Winnings, [RunWin; MAX_LINES]) {
     let grid=grid(card,stops);
     let mut wins=[RunWin::default();MAX_LINES];
     let mut total=Winnings::default();
@@ -67,5 +78,5 @@ pub fn value_runs(card: &MachineConfig, rules: &RunRules, stops: &Stops) -> Resu
             start=next;
         }
     }
-    Ok((total,wins))
+    (total,wins)
 }
