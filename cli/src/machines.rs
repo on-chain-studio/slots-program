@@ -60,8 +60,25 @@ impl Machine {
         (GAMBLE_FAIR as f64 * (self.win_pct / 50.0)).floor() as u32
     }
 
+    /// A reel strip is cyclic and the visible window spans consecutive stops, so three identical
+    /// symbols in a row show as a vertical triple — which no payline pays, and looks like a
+    /// missed win. Refuse to publish one; the solver never emits them, but a hand-authored shelf
+    /// might.
+    fn check_strips(&self) -> Result<()> {
+        for (reel, strip) in self.strips.iter().enumerate() {
+            let n = strip.len();
+            for i in 0..n {
+                if strip[i] == strip[(i + 1) % n] && strip[i] == strip[(i + 2) % n] {
+                    bail!("{}: reel {reel} has three of symbol {} in a row at stop {i}", self.name, strip[i]);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The program's `SetMachine` for publishing this machine at `index`.
     pub fn set_machine(&self, index: u8) -> Result<SetMachine> {
+        self.check_strips()?;
         Ok(SetMachine {
             index,
             mode: self.mode()?,

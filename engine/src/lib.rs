@@ -19,6 +19,9 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 
 pub use casino_core::rng::{Rng, TOTAL};
 
+mod runs;
+pub use runs::{value_runs, RunRules, RunWin, Span};
+
 pub const MAX_REELS: usize = 5;
 pub const MAX_STRIP: usize = 32;
 pub const MAX_ROWS: usize = 3;
