@@ -33,7 +33,7 @@ use casino_ops::{
 use clap::{Parser, Subcommand};
 use slots::instructions::{close_spin::CloseSpin, initialize::Initialize};
 use slots::state::analytics::{self as analytics_state, Analytics};
-use slots::state::config::MachineConfig;
+use slots::state::config::{MachineConfig, VERSION as CONFIG_VERSION};
 use slots::state::spin::{self, Spin};
 
 mod generated {
@@ -170,6 +170,16 @@ async fn main() -> Result<()> {
                 // A fresh shelf: machines come from `publish`.
                 Initialize { machine_count: 0 },
             ))?;
+            // Setup leaves an existing config alone, but a shelf at an older layout must be
+            // re-initialised: that sets its version and grows it to the new stride. Its machines
+            // then read as nonsense until `publish` rewrites them.
+            if let Some(account) = chain.account(&config()).await? {
+                let version = u64::from_le_bytes(account.data[8..16].try_into()?);
+                if version != CONFIG_VERSION {
+                    chain.base.send(&[initialize.clone()], &[&chain.admin]).await?;
+                    println!("shelf moved from version {version} to {CONFIG_VERSION} — run `publish` next\n");
+                }
+            }
             let plan = Setup { initialize, slots: vec![slots], public: vec![], house_fund: lamports(house_fund), float: lamports(float) };
             Ops::<Slots>::new(&chain).setup(plan).await
         }
