@@ -4,7 +4,7 @@
 //! pins `slots_engine.wasm` against this file, so the reels the player watches and the money
 //! the chain settles cannot disagree.
 //!
-//!   cargo run --release --example vectors > ../../slots/app/src/test/resources/vectors.json
+//!   cargo run --release --example vectors > ../../slots/shared/src/androidUnitTest/resources/vectors.json
 
 use slots_engine::*;
 
