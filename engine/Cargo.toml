@@ -6,6 +6,10 @@ edition = "2021"
 [features]
 default = ["std"]
 std = []
+# Leaves out the C ABI this crate exports on wasm32 for a client that loads the engine as its own
+# .wasm module. A Rust wasm binary that links the engine as a library sets it: the ABI's unmangled
+# names (`buffer`, …) are the same in every engine and would clash when two are linked together.
+no-abi = []
 
 [lib]
 crate-type = ["cdylib", "rlib"]

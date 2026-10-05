@@ -596,7 +596,7 @@ pub mod analysis {
 ///      then the winning-line bitmask u32.
 pub const BUF_LEN: usize = MACHINE_BYTES + 32 + 1 + MAX_REELS;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(feature = "no-abi")))]
 mod wasm_abi {
     use super::*;
 
