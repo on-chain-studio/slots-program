@@ -1,17 +1,14 @@
-//! Solves the shelf: strips per machine, held to the house targets under each mode's real
+//! Solves one machine of the shelf: its strips, held to the house targets under its mode's real
 //! maths — plain enumeration for lines, the optimal-play DP for hold, the shaded ladder riding
-//! on a lines machine for gamble. Writes ../scripts/machines.json for `slots-ops publish`.
+//! on a lines machine for gamble. Rewrites that machine's entry in ../scripts/machines.json for
+//! `slots-ops publish` and leaves every other entry as it is.
 //!
-//!   cargo run --release --example solve
+//!   cargo run --release --example solve -- 1
 //!
-//! The pay tables are **fixed**: each machine declares its prizes as clean whole-bet multiples
-//! (x2, x5, x10…), and the line multipliers derive from them (per-bet x line count). What the
-//! solver owns is the *odds* — symbol counts per reel, independently, and their placement —
-//! which is where all the freedom lives anyway: probabilities are products across three reels,
-//! a far finer trim than any integer multiplier tweak. The RTP target is 90% on the spin: no
-//! jackpot exists, so the whole return lives in the machines. The ladder is excluded from the
-//! target — its rungs are published at 48%, a premium the climber pays by choice.
-
+//! The machine is named by its shelf index, its on-chain id. Only the machines the solver makes
+//! can be solved — the casino's five-reel run machine lives in the sheet alone. An entry keeps the
+//! stake and front ends the sheet gives it; the solver owns only the maths.
+//!
 use slots_engine::{analysis, Line, MachineConfig, Symbol, MAX_LINES, MODE_HOLD, MODE_LINES};
 
 /// The house standard for a machine with no decisions. The hold machine sets its own two
@@ -285,40 +282,10 @@ fn main() {
         Goal { name: "GRAVITY WELL", mode: MODE_HOLD,  bet_mults: [20, 10, 6, 5, 4, 3, 2],    hit: (0.20, 0.40), floor_cap: f64::INFINITY, rtp: 0.98, base_rtp: Some(0.75) },
     ];
 
-    // Solve each machine once. The stake never enters the solve — RTP is a ratio — so a machine
-    // is published at two stakes below, low and high, from one set of strips.
-    let solved: Vec<MachineConfig> = goals
-        .iter()
-        .enumerate()
-        .map(|(i, g)| {
-            let (counts, rots, mults) = solve(g, 0x5107 + i as u64);
-            if g.mode != MODE_HOLD {
-                for s in 1..SYMS {
-                    let p_prev = counts.iter().map(|c| c[s - 1]).product::<usize>() as f64;
-                    let p_this = counts.iter().map(|c| c[s]).product::<usize>() as f64;
-                    let cap = if s == SYMS - 1 { g.floor_cap } else { RATIO_MAX };
-                    assert!(
-                        p_this >= p_prev * RATIO_MIN && p_this <= p_prev * cap,
-                        "{}: tier {} product {} outside [{}, {}] of previous {}",
-                        g.name, s, p_this, p_prev * RATIO_MIN, p_prev * cap, p_prev,
-                    );
-                }
-            }
-            let m = machine(&counts, &rots, &mults, g.mode);
-            let r = analysis::report(&m).unwrap();
-            print!("{:13} rtp {:6.2}%  hit 1 in {:4.1}  top x{:4.1}", g.name, r.rtp * 100.0, 1.0 / r.hit_rate, r.top_multiple);
-            if g.mode == MODE_HOLD {
-                print!("  (obvious holds {:.1}%; never holding {:.1}%)",
-                    analysis::naive_report(&m).unwrap().rtp * 100.0, analysis::no_hold_rtp(&m).unwrap() * 100.0);
-            }
-            println!();
-            m
-        })
-        .collect();
-
     // The shelf, in on-chain id order: each solved machine at a low and a high stake. The `name`
     // is a label for the client (which supplies the theme); the chain carries only the math. Goal
-    // 0 is the lines machine, goal 1 the hold machine.
+    // 0 is the lines machine, goal 1 the hold machine. Machines the solver does not make — the
+    // casino's five-reel run machine — live in the sheet alone.
     let shelf: [(&str, usize, u64, &[&str]); 4] = [
         ("NEON NIGHTS",  0,  5_000_000, &["arcade"]),
         ("GOLD RUSH",    0, 50_000_000, &["arcade"]),
@@ -326,28 +293,126 @@ fn main() {
         ("BLACK HOLE",   1, 50_000_000, &["arcade"]),
     ];
 
-    let mut out = String::from("[\n");
-    for (i, (label, goal, stake, shown_in)) in shelf.iter().enumerate() {
-        let g = &goals[*goal];
-        let m = &solved[*goal];
-        let strips: Vec<String> = (0..REELS)
-            .map(|r| format!("[{}]", m.strips[r][..STRIP].iter().map(|s| s.to_string()).collect::<Vec<_>>().join(",")))
-            .collect();
-        let mults: Vec<String> = m.symbols[..SYMS].iter().map(|s| s.mult.to_string()).collect();
-        out.push_str(&format!(
-            "  {{ \"name\": \"{}\", \"mode\": \"{}\", \"stake\": {}, \"rounds\": {}, \"rungs\": 0, \"win_pct\": 50,\n    \"mults\": [{}],\n    \"strips\": [{}],\n    \"shown_in\": [{}] }}{}\n",
-            label,
-            if g.mode == MODE_HOLD { "hold" } else { "lines" },
-            stake,
-            if g.mode == MODE_HOLD { hold_rounds() } else { 1 },
-            mults.join(","),
-            strips.join(", "),
-            shown_in.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", "),
-            if i + 1 < shelf.len() { "," } else { "" },
-        ));
-    }
-    out.push_str("]\n");
+    let index = std::env::args().nth(1).and_then(|a| a.parse::<usize>().ok());
+    let Some((label, goal, stake, shown_in)) = index.and_then(|i| shelf.get(i)).copied() else {
+        eprintln!("name the machine to solve by its shelf index:");
+        for (i, (label, goal, _, _)) in shelf.iter().enumerate() {
+            eprintln!("  {i}  {label:13} ({})", goals[*goal].name);
+        }
+        std::process::exit(2);
+    };
+    let index = index.unwrap();
+    let g = &goals[goal];
+
+    // The stake never enters the solve — RTP is a ratio — so both stakes of a goal solve to the
+    // same strips.
+    let m = {
+        let (counts, rots, mults) = solve(g, 0x5107 + goal as u64);
+        if g.mode != MODE_HOLD {
+            for s in 1..SYMS {
+                let p_prev = counts.iter().map(|c| c[s - 1]).product::<usize>() as f64;
+                let p_this = counts.iter().map(|c| c[s]).product::<usize>() as f64;
+                let cap = if s == SYMS - 1 { g.floor_cap } else { RATIO_MAX };
+                assert!(
+                    p_this >= p_prev * RATIO_MIN && p_this <= p_prev * cap,
+                    "{}: tier {} product {} outside [{}, {}] of previous {}",
+                    g.name, s, p_this, p_prev * RATIO_MIN, p_prev * cap, p_prev,
+                );
+            }
+        }
+        let m = machine(&counts, &rots, &mults, g.mode);
+        let r = analysis::report(&m).unwrap();
+        print!("{:13} rtp {:6.2}%  hit 1 in {:4.1}  top x{:4.1}", g.name, r.rtp * 100.0, 1.0 / r.hit_rate, r.top_multiple);
+        if g.mode == MODE_HOLD {
+            print!("  (obvious holds {:.1}%; never holding {:.1}%)",
+                analysis::naive_report(&m).unwrap().rtp * 100.0, analysis::no_hold_rtp(&m).unwrap() * 100.0);
+        }
+        println!();
+        m
+    };
+
     let path = std::env::var("SLOTS_OUT").unwrap_or_else(|_| "../scripts/machines.json".to_string());
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|_| "[]".into());
+    let mut entries = sheet_entries(&text);
+    let entry = match entries.get(index) {
+        Some(old) => {
+            // An index that holds some other machine is a sheet out of step with this table;
+            // rewriting it would publish the wrong maths under that machine's name.
+            assert_eq!(entry_name(old), label, "the sheet's machine {index} is not {label}");
+            // What the sheet already says about where and at what stake a machine plays is kept.
+            let old: serde_json::Value = serde_json::from_str(old).unwrap();
+            let places: Vec<String> = old["shown_in"].as_array().unwrap().iter().map(|p| p.as_str().unwrap().to_string()).collect();
+            render(label, g.mode, old["stake"].as_u64().unwrap(), &m, &places)
+        }
+        None => {
+            // A new machine can only go last: an id already published must never move.
+            assert_eq!(index, entries.len(), "the sheet has {} machines; {index} would leave a gap", entries.len());
+            render(label, g.mode, stake, &m, &shown_in.iter().map(|p| p.to_string()).collect::<Vec<_>>())
+        }
+    };
+    match entries.get_mut(index) {
+        Some(e) => *e = entry,
+        None => entries.push(entry),
+    }
+    let out = format!("[\n{}\n]\n", entries.iter().map(|e| format!("  {e}")).collect::<Vec<_>>().join(",\n"));
     std::fs::write(&path, &out).unwrap();
     println!("\nwrote {path}");
+}
+
+/// One sheet entry, in the sheet's own layout.
+fn render(label: &str, mode: u8, stake: u64, m: &MachineConfig, shown_in: &[String]) -> String {
+    let strips: Vec<String> = (0..REELS)
+        .map(|r| format!("[{}]", m.strips[r][..STRIP].iter().map(|s| s.to_string()).collect::<Vec<_>>().join(",")))
+        .collect();
+    let mults: Vec<String> = m.symbols[..SYMS].iter().map(|s| s.mult.to_string()).collect();
+    format!(
+        "{{ \"name\": \"{}\", \"mode\": \"{}\", \"stake\": {}, \"rounds\": {}, \"rungs\": 0, \"win_pct\": 50,\n    \"mults\": [{}],\n    \"strips\": [{}],\n    \"shown_in\": [{}] }}",
+        label,
+        if mode == MODE_HOLD { "hold" } else { "lines" },
+        stake,
+        if mode == MODE_HOLD { hold_rounds() } else { 1 },
+        mults.join(","),
+        strips.join(", "),
+        shown_in.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", "),
+    )
+}
+
+/// The sheet's top-level entries, each exactly as written, so the ones not solved here are
+/// written back untouched.
+fn sheet_entries(text: &str) -> Vec<String> {
+    let mut entries = Vec::new();
+    let (mut depth, mut start, mut in_string, mut escaped) = (0usize, 0usize, false, false);
+    for (i, c) in text.char_indices() {
+        if in_string {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' | '[' => {
+                if depth == 1 && c == '{' {
+                    start = i;
+                }
+                depth += 1;
+            }
+            '}' | ']' => {
+                depth -= 1;
+                if depth == 1 && c == '}' {
+                    entries.push(text[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    entries
+}
+
+fn entry_name(entry: &str) -> String {
+    let v: serde_json::Value = serde_json::from_str(entry).unwrap();
+    v["name"].as_str().unwrap_or_default().to_string()
 }

@@ -1,5 +1,6 @@
-//! The shelf as `scripts/machines.json` describes it — written by the solver
-//! (`cargo run --release --example solve` in `engine/`), never by hand — and as the chain holds it.
+//! The shelf as `scripts/machines.json` describes it — the arcade machines solved one at a time
+//! (`cargo run --release --example solve -- <index>` in `engine/`), the casino's five-reel run
+//! machine converted from private-casino's preset — and as the chain holds it.
 //!
 //! A machine goes on the chain as the program's own `SetMachine`, and is checked against the
 //! bytes the program's own builder makes of that same `SetMachine`: the verifier compares every
