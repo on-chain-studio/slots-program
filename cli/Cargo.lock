@@ -3799,6 +3799,7 @@ dependencies = [
  "serde",
  "serde_json",
  "slots",
+ "slots-engine",
  "solarium-client",
  "tokio",
 ]

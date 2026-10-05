@@ -381,7 +381,8 @@ mod tests {
     #[test]
     fn a_published_machine_is_the_bytes_the_script_sent() {
         let sheet = machines::load(machines::default_path().as_ref()).unwrap();
-        for (index, m) in sheet.iter().enumerate() {
+        // The script only ever encoded complete-line machines.
+        for (index, m) in sheet.iter().enumerate().filter(|(_, m)| m.run_pays.is_none()) {
             let mut want = 5u64.to_le_bytes().to_vec();
             want.extend_from_slice(&[index as u8, m.mode().unwrap()]);
             want.extend_from_slice(&m.stake.to_le_bytes());
@@ -413,6 +414,19 @@ mod tests {
             // And the program would take it.
             m.built(index as u8).unwrap();
         }
+    }
+
+    /// The five-reel machine in the sheet is private-casino's `gold-rush-five`: SLOT-MACHINES.md
+    /// balances it to 89.97%, so a slip converting its strips, lines or pays shows in the return.
+    #[test]
+    fn the_runs_machine_returns_what_it_was_balanced_to() {
+        let sheet = machines::load(machines::default_path().as_ref()).unwrap();
+        let (index, five) = sheet.iter().enumerate().find(|(_, m)| m.run_pays.is_some()).unwrap();
+        let built = five.built(index as u8).unwrap();
+        assert_eq!(built.shown_in, slots::state::config::SHOWN_IN_CASINO, "the arcade cannot play a runs machine");
+        let engine = slots_engine::parse(bytemuck::bytes_of(&built)).unwrap();
+        let rtp = slots_engine::analysis::report(&engine).unwrap().rtp;
+        assert!((rtp - 0.8997).abs() < 0.0001, "rtp {rtp}");
     }
 
     /// `play-slots.mjs`'s `resolveBetAccounts`, after the receipt and the vault authority the vault
