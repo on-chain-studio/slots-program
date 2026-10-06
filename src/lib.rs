@@ -422,4 +422,12 @@ impl Slots {
             ephemeral_vault.info.as_view(), magic_program.info.as_view(), permission_program.info.as_view(),
         )?)
     }
+    #[instruction(discriminator = 25)]
+    pub fn add_caller<'a>(&self, admin: &Signer<'a>, owner: &Account<'a>, account: &Account<'a>,
+        permission: &mut Account<'a>, permission_program: &Account<'a>, vault_program: &Account<'a>,
+        args: AddCaller) -> Result<()> {
+        Ok(args.process::<Slots>(admin.info.as_view(), owner.info.as_view(), account.info.as_view(),
+            permission.info.as_view(), permission_program.info.as_view(), vault_program.info.as_view())?)
+    }
+
 }

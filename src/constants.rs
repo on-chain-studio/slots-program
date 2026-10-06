@@ -26,5 +26,6 @@ impl Casino for Slots {
     /// key is handled like a hot wallet — it may read the books (`ANALYTICS_READERS`) but it must
     /// never move or reprice anything.
     const ADMINS: &'static [Pubkey] = &OPS_ONLY;
+    const CALLERS: &'static [Pubkey] = &[PRIVATE_CASINO];
     const TREASURIES: &'static [&'static [u8]] = &TREASURIES;
 }

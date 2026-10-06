@@ -3,7 +3,7 @@ use casino_core::chain::*;
 use casino_core::ids::PERMISSION_PROGRAM;
 use casino_core::{pda, permission, Casino, CoreError};
 
-use crate::constants::{ANALYTICS_READERS, TREASURIES};
+use crate::constants::{ANALYTICS_READERS, PRIVATE_CASINO, TREASURIES};
 use crate::state::analytics::{self, Analytics};
 use crate::state::config::{self, Config, INITIAL_MACHINES};
 use crate::Slots;
@@ -111,7 +111,7 @@ impl Initialize {
             permission,
             initializer,
             system_program,
-            permission::members(program_id, &ANALYTICS_READERS),
+            permission::members(program_id, &[ANALYTICS_READERS.as_slice(), &[PRIVATE_CASINO]].concat()),
         )?;
 
         // Grow a short shelf up to the starting size, never shrink — it may hold live machines.

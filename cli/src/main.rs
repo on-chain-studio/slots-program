@@ -42,7 +42,7 @@ mod generated {
 
 pub use generated::Slots;
 
-casino_ops::admin_instructions!(Slots, grow_config);
+casino_ops::admin_instructions!(Slots, grow_config, add_caller);
 
 impl Game for Slots {
     type Program = slots::Slots;
