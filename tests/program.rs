@@ -285,3 +285,41 @@ fn a_late_answer_for_an_earlier_round_is_refused() {
     );
     assert_eq!(result.raw_result, core(casino_core::CoreError::WrongStatus));
 }
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn permission_upgrade_checks_the_permission_even_when_the_spin_is_absent() {
+    let table = Table::new();
+    let house = Pubkey::find_program_address(&[b"house"], &program()).0;
+    let acl = key(casino_core::ids::PERMISSION_PROGRAM.to_bytes());
+    let permission = Pubkey::new_unique();
+    let vault = Pubkey::new_unique();
+    let magic = Pubkey::new_unique();
+    let instruction = Instruction::new_with_bytes(program(), &24u64.to_le_bytes(), vec![
+        AccountMeta::new_readonly(table.user, false),
+        AccountMeta::new_readonly(table.spin, false),
+        AccountMeta::new(permission, false),
+        AccountMeta::new(house, false),
+        AccountMeta::new(vault, false),
+        AccountMeta::new_readonly(magic, false),
+        AccountMeta::new_readonly(acl, false),
+    ]);
+    let mut accounts = vec![
+        (table.user, wallet()), (table.spin, Account::default()),
+        (permission, Account::default()), (house, wallet()),
+        (vault, wallet()), (magic, wallet()), (acl, wallet()),
+    ];
+    assert_eq!(mollusk().process_instruction(&instruction, &accounts).raw_result, Ok(()));
+    accounts[2].1 = Account { data: vec![0; 134], owner: acl, ..wallet() };
+    assert_eq!(mollusk().process_instruction(&instruction, &accounts).raw_result,
+        failure(InstructionError::InvalidSeeds));
+}
+
+#[test]
+fn new_spin_permissions_include_the_floor_and_vault() {
+    let human = casino_core::chain::Pubkey::new_from_array([42; 32]);
+    let members = slots::instructions::resolve_bet::spin_members(&human);
+    assert!(members.contains(&human));
+    assert!(members.contains(&slots::constants::PRIVATE_CASINO));
+    assert!(members.contains(&casino_core::ids::VAULT_PROGRAM));
+}

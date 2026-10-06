@@ -13,9 +13,11 @@ impl UpgradePermissions {
         permission_program: &AccountInfo) -> ProgramResult {
         let spin_bump = pda::validate(&crate::ID, spin, &[b"spin", user.address().as_ref()])?;
         let house_bump = pda::validate(&crate::ID, house, &[b"house"])?;
-        // resolve_bet makes the permission of a spin that doesn't exist yet.
-        if spin.data_len() == 0 {
+        if spin_permission.data_len() == 0 {
             return Ok(());
+        }
+        if spin_permission.address() != &permission::address(spin.address()) {
+            return Err(ProgramError::InvalidSeeds);
         }
         permission::upgrade_ephemeral(
             &crate::ID, permission_program, spin, &[b"spin", user.address().as_ref(), &[spin_bump]],
