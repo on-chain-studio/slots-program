@@ -11,3 +11,9 @@ keys/
 # Local machine state
 .DS_Store
 .claude/settings.local.json
+
+# Secret keys never belong in a repository: they live in ~/keys (see .githooks/pre-commit).
+*keypair*.json
+*wallets*.json
+id.json
+*.key
