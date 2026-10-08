@@ -2498,6 +2498,7 @@ dependencies = [
  "slots-engine",
  "solana-account",
  "solana-instruction",
+ "solana-program-runtime",
  "solana-pubkey",
  "solarium",
  "solarium-program",

@@ -66,6 +66,8 @@ impl Round<'_, '_> {
         let resolve = built(generated::Slots::resolve_bet_instruction(
             self.player.receipt(), vault::authority(), config(), house(), spin_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM,
             analytics(), permission::address(&spin_of(&user)), PERMISSION_PROGRAM,
+            // No casino floor station: this is a spin played standing up.
+            vec![],
             ResolveBet { human: user, machine_id: machine, consenter: session },
         ))?;
         self.player.play(&self.at, &[request, self.player.settle::<Slots>(resolve)]).await?;

@@ -1,6 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use casino_core::chain::*;
-use casino_core::{pda, CoreError};
+use casino_core::{observe, pda, CoreError};
 
 use crate::error::GameError;
 use crate::state::config::MODE_HOLD;
@@ -64,6 +64,7 @@ impl Hold {
         spin.round += 1;
         spin.status = SpinStatus::Bought as u64;
 
-        Ok(())
+        // Waiting on a seed again, for the same bet and whoever watches it.
+        Spin::observe(spin_account, observe::PENDING)
     }
 }

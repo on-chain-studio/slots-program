@@ -47,3 +47,6 @@ mollusk-svm = { git = "https://github.com/anza-xyz/mollusk", rev = "f14a5ffc9f5c
 solana-account = "4"
 solana-instruction = "3"
 solana-pubkey = "4.4"
+# Stand-ins for the MagicBlock programs and the VRF in the callback tests, as builtins — the same
+# runtime mollusk-svm runs on.
+solana-program-runtime = { version = "4.3", features = ["agave-unstable-api"] }

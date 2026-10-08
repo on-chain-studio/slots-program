@@ -304,7 +304,8 @@ impl Slots {
         )?)
     }
 
-    /// The vault's settle callback for a stake.
+    /// The vault's settle callback for a stake. A seated player's settle names the casino floor
+    /// station after the named accounts; `rest` is that, or nothing.
     #[instruction(discriminator = 17)]
     pub fn resolve_bet<'a>(
         &self,
@@ -318,12 +319,14 @@ impl Slots {
         analytics: &mut Account<'a>,
         spin_permission: &mut Account<'a>,
         permission_program: &Account<'a>,
+        rest: &Remaining<'a>,
         args: resolve_bet::ResolveBet,
     ) -> Result<()> {
         Ok(args.process(
             receipt.info.as_view(), vault_authority.info.as_view(), config.info.as_view(), house.info.as_view(), spin.info.as_view(),
             ephemeral_vault.info.as_view(), magic_program.info.as_view(), analytics.info.as_view(),
             spin_permission.info.as_view(), permission_program.info.as_view(),
+            &rest.iter().map(|account| *account.as_view()).collect::<Vec<_>>(),
         )?)
     }
 
@@ -345,15 +348,20 @@ impl Slots {
         )?)
     }
 
-    /// The VRF oracle's callback.
+    /// The VRF oracle's callback. `rest` is the house, the Magic context and the Magic program
+    /// when a station watches the spin, so the house can schedule the floor's publish.
     #[instruction(discriminator = 19)]
     pub fn callback_reveal<'a>(
         &self,
         vrf_identity: &Signer<'a>,
         spin: &mut Account<'a>,
+        rest: &Remaining<'a>,
         args: callback_reveal::CallbackReveal,
     ) -> Result<()> {
-        Ok(args.process(vrf_identity.info.as_view(), spin.info.as_view())?)
+        Ok(args.process(
+            vrf_identity.info.as_view(), spin.info.as_view(),
+            &rest.iter().map(|account| *account.as_view()).collect::<Vec<_>>(),
+        )?)
     }
 
     #[instruction(discriminator = 20)]

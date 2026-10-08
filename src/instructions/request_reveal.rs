@@ -1,12 +1,15 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use casino_core::chain::*;
-use casino_core::{pda, vrf, CoreError};
+use casino_core::{observe, pda, vrf, CoreError};
 
 use crate::state::spin::{Spin, SpinStatus};
 
 /// Asks the VRF for this round's seed. Permissionless and retryable (from `Bought` *or*
 /// `Requested`), so a dropped oracle callback cannot strand a paid bet — anyone may re-fire it,
 /// and the house pays either way.
+///
+/// When a casino floor station watches this bet, the callback is also handed the house, the
+/// Magic context and the Magic program, which is what it needs to schedule the floor's publish.
 /// Accounts: [user, house, spin, identity, oracle_queue, slot_hashes, system_program, vrf_program]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestReveal;
@@ -55,16 +58,21 @@ impl RequestReveal {
             caller_seed[8 + i] ^= b;
         }
 
+        let mut callback_accounts = vec![vrf::SerializableAccountMeta {
+            pubkey: *spin_account.address(),
+            is_signer: false,
+            is_writable: true,
+        }];
+        if Spin::observable(spin_account).is_some_and(|trailer| trailer.observer != [0; 32]) {
+            callback_accounts.extend(observe::callback_metas(house.address()));
+        }
+
         vrf::request_randomness(
             program_id, house, identity, identity_bump, oracle_queue, system_program,
             slot_hashes, vrf_program,
             caller_seed,
             crate::SlotsInstruction::CALLBACK_REVEAL.to_le_bytes(),
-            vec![vrf::SerializableAccountMeta {
-                pubkey: *spin_account.address(),
-                is_signer: false,
-                is_writable: true,
-            }],
+            callback_accounts,
             // Reject delayed answers from earlier bets or rounds.
             [round.to_le_bytes(), generation.to_le_bytes()].concat(),
             &[b"house", &[house_bump]],

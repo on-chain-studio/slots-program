@@ -1,6 +1,7 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use casino_core::chain::*;
-use casino_core::magicblock::{create_ephemeral_account, EPHEMERAL_VAULT_ID, MEMBER_READ};
+use casino_core::magicblock::{create_ephemeral_account, resize_ephemeral_account, EPHEMERAL_VAULT_ID, MEMBER_READ};
+use casino_core::observe::{self, Observable};
 use casino_core::permission;
 use casino_core::{pda, receipt, CoreError};
 
@@ -11,8 +12,12 @@ use crate::state::Config;
 
 /// Turns a settled stake into a spin. The seed comes later via `RequestReveal`, so a failed VRF
 /// request cannot unwind a bet that is already paid for.
+///
+/// A player seated at a casino floor station names it as one more account after these; it
+/// becomes the spin's observer for this bet alone, so the reveal can tell the floor the result.
+/// A bet without one clears it.
 /// Accounts: [receipt, vault_authority (signer), config, house, spin, ephemeral_vault,
-///            magic_program, analytics, spin_permission, permission_program]
+///            magic_program, analytics, spin_permission, permission_program, station?]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct ResolveBet {
     pub human: Pubkey,
@@ -38,6 +43,7 @@ impl ResolveBet {
         analytics_account: &AccountInfo,
         spin_permission: &AccountInfo,
         permission_program: &AccountInfo,
+        rest: &[AccountInfo],
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
@@ -66,13 +72,28 @@ impl ResolveBet {
 
         let terms = *Config::item(config_account, self.machine_id)?;
 
-        if spin_account.data_len() != 0 && spin_account.data_len() < Spin::PERSISTENT_SIZE {
+        // What the floor was last shown stays on show until this bet's seed lands over it; a
+        // spin from before the trailer shows its last seed.
+        let trailer = Spin::observable(spin_account).unwrap_or_else(|| {
+            let mut fresh = Observable::new(observe::KIND_SLOTS);
+            fresh.result[..32].copy_from_slice(&previous_seed);
+            fresh
+        });
+
+        // Terms from before machines carried run rules are another shape: that spin is closed
+        // and created again. Anything since only grew at the end, so it grows in place, and its
+        // address and the permission keyed to it stay. The house sponsors the difference, as it
+        // did the rent.
+        if spin_account.data_len() != 0 && spin_account.data_len() < Spin::WITH_TERMS {
             receipt::close(magic_program, house, spin_account, ephemeral_vault, house_bump)?;
         }
         if spin_account.data_len() == 0 {
             create_ephemeral_account(house, spin_account, ephemeral_vault, magic_program,
-                Spin::PERSISTENT_SIZE as u32,
+                Spin::OBSERVED_SIZE as u32,
                 &[&[b"house", &[house_bump]], &[b"spin", self.human.as_ref(), &[spin_bump]]])?;
+        } else if spin_account.data_len() != Spin::OBSERVED_SIZE {
+            resize_ephemeral_account(house, spin_account, ephemeral_vault, magic_program,
+                Spin::OBSERVED_SIZE as u32, &[&[b"house", &[house_bump]]])?;
         }
         Spin::set_generation(spin_account, generation)?;
 
@@ -91,6 +112,15 @@ impl ResolveBet {
             s.seed = previous_seed;
         }
         Spin::write_terms(spin_account, &terms)?;
+        Observable {
+            status: observe::PENDING,
+            generation,
+            round: 0,
+            config_id: self.machine_id,
+            observer: observe::observer_from(rest),
+            ..trailer
+        }
+        .write(spin_account)?;
 
         permission::upgrade_ephemeral(
             program_id, permission_program, spin_account, &[b"spin", self.human.as_ref(), &[spin_bump]],

@@ -83,6 +83,17 @@ fn the_stride_matches_the_engine() {
 }
 
 #[test]
+fn a_spin_is_its_head_its_terms_its_generation_and_the_floor_s_trailer() {
+    // Every size a spin has been placed at is a size the program still reads; the casino floor
+    // finds the trailer by counting back from the end, so it must stay last.
+    use slots::state::Spin;
+    assert_eq!(Spin::WITH_TERMS, 160 + MACHINE_SIZE);
+    assert_eq!(Spin::PERSISTENT_SIZE, Spin::WITH_TERMS + 8);
+    assert_eq!(Spin::OBSERVED_SIZE, Spin::PERSISTENT_SIZE + casino_core::observe::SIZE);
+    assert_eq!((Spin::WITH_TERMS, Spin::PERSISTENT_SIZE, Spin::OBSERVED_SIZE), (664, 672, 808));
+}
+
+#[test]
 fn a_published_machine_is_what_the_engine_reads() {
     let m = gold();
     m.validate().expect("gold rush rejected");

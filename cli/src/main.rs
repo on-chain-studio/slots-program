@@ -437,7 +437,7 @@ mod tests {
         let user = Pubkey::new_from_array([5; 32]);
         let resolve = generated::Slots::resolve_bet_instruction(
             Pubkey::new_from_array([6; 32]), casino_ops::vault::authority(), config(), house(), spin_of(&user),
-            EPHEMERAL_VAULT, MAGIC_PROGRAM, analytics(), permission::address(&spin_of(&user)), PERMISSION_PROGRAM,
+            EPHEMERAL_VAULT, MAGIC_PROGRAM, analytics(), permission::address(&spin_of(&user)), PERMISSION_PROGRAM, vec![],
             slots::instructions::resolve_bet::ResolveBet { human: user, machine_id: 1, consenter: user },
         )
         .unwrap();

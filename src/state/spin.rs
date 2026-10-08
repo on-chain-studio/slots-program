@@ -1,5 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use casino_core::chain::*;
+use casino_core::observe::{self, Observable};
 
 use crate::state::config::{MachineConfig, MAX_REELS};
 
@@ -21,7 +22,8 @@ pub enum SpinStatus {
 /// `["spin", user]` — reusable bet state. Collection retains the resolved result.
 ///
 /// Carries its own `terms`, copied from the shelf at purchase, so a rebalance cannot rewrite a
-/// bet someone already owns.
+/// bet someone already owns. After the terms come the generation and then, last, the casino
+/// floor's [`Observable`] trailer: `[Spin][terms][generation][trailer]`.
 #[repr(C)]
 #[derive(Pod, Zeroable, Clone, Copy)]
 pub struct Spin {
@@ -53,6 +55,9 @@ impl Spin {
     /// A bet placed with its terms printed after it.
     pub const WITH_TERMS: usize = Self::SIZE + size_of::<MachineConfig>();
     pub const PERSISTENT_SIZE: usize = Self::WITH_TERMS + 8;
+    /// With the floor's trailer after the generation: what every bet is placed at now. A spin at
+    /// a smaller size is brought to this one by its next bet.
+    pub const OBSERVED_SIZE: usize = Self::PERSISTENT_SIZE + observe::SIZE;
 
     /// The sizes before machines carried run rules (344-byte terms). A spin left at one of them
     /// is closed and re-created at the current size on its next bet, which needs its generation.
@@ -65,7 +70,8 @@ impl Spin {
         let at = match data.len() {
             Self::WITH_TERMS | Self::LEGACY_WITH_TERMS => return Ok(0),
             Self::LEGACY_PERSISTENT_SIZE => Self::LEGACY_WITH_TERMS,
-            _ => Self::WITH_TERMS,
+            Self::PERSISTENT_SIZE | Self::OBSERVED_SIZE => Self::WITH_TERMS,
+            _ => return Err(ProgramError::InvalidAccountData),
         };
         let bytes = data.get(at..at + 8).ok_or(ProgramError::InvalidAccountData)?;
         Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
@@ -76,6 +82,22 @@ impl Spin {
         let bytes = data.get_mut(Self::WITH_TERMS..Self::PERSISTENT_SIZE).ok_or(ProgramError::InvalidAccountData)?;
         bytes.copy_from_slice(&generation.to_le_bytes());
         Ok(())
+    }
+
+    /// The floor's view of this spin, on a spin that has one: a spin last bet on before the
+    /// trailer existed gets it with its next bet, and until then there is nothing to show.
+    pub fn observable(account: &AccountInfo) -> Option<Observable> {
+        if account.data_len() != Self::OBSERVED_SIZE { return None; }
+        Observable::read_account(account)
+    }
+
+    /// Moves the trailer to `status`, keeping its observer and its last result. Nothing to do on
+    /// a spin without one.
+    pub fn observe(account: &AccountInfo, status: u8) -> ProgramResult {
+        match Self::observable(account) {
+            Some(trailer) => Observable { status, ..trailer }.write(account),
+            None => Ok(()),
+        }
     }
 
     pub fn stops(&self) -> [u8; MAX_REELS] {

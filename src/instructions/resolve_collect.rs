@@ -1,7 +1,7 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use casino_core::chain::*;
 use casino_core::magicblock::EPHEMERAL_VAULT_ID;
-use casino_core::{pda, receipt, CoreError};
+use casino_core::{observe, pda, receipt, CoreError};
 
 use crate::instructions::request_collect::payout;
 use crate::state::analytics::Analytics;
@@ -60,6 +60,6 @@ impl ResolveCollect {
         }
 
         Spin::load_mut(spin_account)?.status = SpinStatus::Collected as u64;
-        Ok(())
+        Spin::observe(spin_account, observe::SETTLED)
     }
 }
