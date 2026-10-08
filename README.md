@@ -49,7 +49,13 @@ the engine still play it.
 | `["config"]` | The shelf: every machine's strips, lines and pay table — all public. Grows, never shrinks. |
 | `["house"]` | Payer inside the rollup (spin rent + VRF); owns the house ledger (the payout float). Delegated. |
 | `["analytics"]` | Lifetime counters, written only by settle callbacks — every number is settled money. Delegated; TEE reads restricted to the analytics readers (the ops key and the dev key). |
-| `["spin", user]` | The player's bet, **ephemeral** and reused: created by the first stake's settle callback, marked collected by the payout's. A new bet needs a collected spin. Carries its own terms, copied at purchase, and a generation that rejects VRF answers meant for an earlier bet. |
+| `["spin", user]` | The player's bet, **ephemeral** and reused: created by the first stake's settle callback, marked collected by the payout's. A new bet needs a collected spin. Carries its own terms, copied at purchase, a generation that rejects VRF answers meant for an earlier bet, and the casino floor's trailer (below). |
+
+A spin is `[Spin 160][terms 504][generation 8][trailer 136]` = 808 bytes (`Spin::OBSERVED_SIZE`).
+Every earlier size still reads, and the next bet brings it up to date: 664 and 672 (no
+generation; no trailer) grow in place through the Magic program, the house paying the rent as it
+did at creation; 504 and 512 (terms from before run rules) are closed and created again. Either
+way the generation carries on.
 
 ## The flow
 
@@ -72,6 +78,28 @@ act for the user when the stake settled — so no wallet prompt per round. Colle
 allowed because it is provably harmless: collecting grid N equals holding every reel and
 respinning.
 
+## The casino floor
+
+The last 136 bytes of a spin are `casino_core::observe::Observable`: what the casino floor
+(`EzQPZ…`) shows of the bet on a station, read straight off this program's account so nothing a
+client says about a result is trusted. `kind` is `KIND_SLOTS`, `config_id` the machine, `result[0..32]`
+the seed, and `status` follows the spin:
+
+```
+ResolveBet ──▶ PENDING          observer = the station named on this settle, or none
+CallbackReveal ──▶ RESULT       round, result = the seed; publish if watched
+Hold / Gamble ──▶ PENDING       same observer, last result kept
+ResolveCollect ──▶ SETTLED
+```
+
+A seated player's client names the station as one more account after `ResolveBet`'s own on the
+vault settle; any account the floor program owns, with data, is taken as one, and a bet without
+it clears the observer, so watching never outlives the bet. While there is an observer,
+`RequestReveal` hands the VRF callback the house, the Magic context and the Magic program after the
+spin, and `CallbackReveal` has the house schedule one floor `Publish` (a one-shot task, under an id
+per spin). A callback without those accounts — requested before the station, or before this
+program knew to ask — lands the seed and publishes nothing. No instruction was added or renumbered.
+
 ## The engine
 
 `engine/` (`slots-engine`) is the shared basis: the program calls it, the client runs the same
@@ -92,9 +120,23 @@ publish landed.
 cargo build-sbf                      # target/deploy/slots.so
 cargo test                           # program: layout + wire pins, SetMachine validation
 cargo test --test program -- --ignored
-                                     # the built .so run in Mollusk: dispatch, refusals, hold, VRF
+                                     # the built .so run in Mollusk: dispatch, refusals, hold, VRF,
+                                     # the floor's trailer and its publish
 (cd engine && cargo test --release)  # engine: determinism, RTP enumeration, hold DP, parity
 ```
+
+Compute, from `cargo test --test program -- --ignored --nocapture` (the Magic and VRF stand-ins
+charge 150 CU a call):
+
+| instruction | CU |
+| --- | --- |
+| `ResolveBet`, creating the spin | 17,465 |
+| `ResolveBet`, reusing it | 15,311 |
+| `ResolveBet`, reusing it, at a station | 15,447 |
+| `CallbackReveal`, a spin without the trailer | 6,896 |
+| `CallbackReveal`, unwatched | 7,120 |
+| `CallbackReveal`, watched: scheduling the publish | 16,900 |
+| `Hold` | 5,884 |
 
 ## Operating it
 

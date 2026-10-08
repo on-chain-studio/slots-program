@@ -86,6 +86,32 @@ here to keep this change to the one security fix. Worth adding in a routine pass
 
 ---
 
+## The casino floor's trailer (2026-10-08)
+
+Spins grew a 136-byte trailer (`casino_core::observe::Observable`) and the reveal may schedule a
+publish on the casino floor. Read for what a player, or anyone, can do with it:
+
+- **The observer is the player's choice, and can only cost a task.** `resolve_bet` keeps the
+  first account after its own as the observer if the floor program owns it and it has data. A
+  player can name any such account, not only their station; the worst it does is have the house
+  schedule one floor `Publish` per watched reveal, which the floor answers by doing nothing when
+  the account is not a station with this player seated. The house already pays per reveal for
+  the VRF, and a player pays a stake for every bet.
+- **Scheduling cannot be made to fail from outside.** The extra callback accounts are written by
+  `request_reveal` from constants and the house PDA, not taken from its caller, and
+  `callback_reveal` re-derives the house and checks all three (`observe::can_publish`) before it
+  schedules; anything else, or nothing, lands the seed without a publish. So a watched seed lands
+  unless the house cannot pay for the task — the same exposure as the VRF request itself.
+- **The trailer moves no money.** Payouts read only the head and the terms (`payout`); nothing
+  reads the trailer back but the floor and the next bet (which keeps its last result). The
+  trailer is written only after the spin's own checks pass, in the same instructions.
+- **Resizing in place keeps the permission.** A 664/672 spin grows to 808 through the Magic
+  program with the house's seeds, like creation; its address, and the permission keyed to it, are
+  unchanged. A 504/512 spin is closed and created again as before. The house pays 136 bytes'
+  more rent once per player.
+
+---
+
 ## Invariants (each with the line that holds it)
 
 | Claim | Where |
@@ -97,6 +123,7 @@ here to keep this change to the one security fix. Worth adding in a routine pass
 | The house cannot alter a placed bet — terms are stamped on the spin at settle and read from it after. | `resolve_bet.rs`, `spin.rs` |
 | Every program this program CPIs is a **constant**, never a passed account (the fix above closed the last exception). | `vault.rs`, `vrf.rs`, `chain.rs`, `magicblock.rs`, `receipt.rs` |
 | The settle callbacks answer only to the vault's authority; the oracle callback only to the VRF identity. | `receipt.rs` (`require_callback`), `callback_reveal.rs` |
+| A publish is scheduled only by the house PDA, only with the accounts `request_reveal` named, only for a spin whose bet named a floor-owned account. | `resolve_bet.rs`, `request_reveal.rs`, `callback_reveal.rs`, casino-core `observe.rs` |
 | A session key can bet and decide, never withdraw (the vault's `withdraw` needs the ledger owner). | vault `withdraw.rs`, `settle_receipt.rs` |
 
 ---
