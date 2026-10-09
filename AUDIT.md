@@ -88,7 +88,7 @@ here to keep this change to the one security fix. Worth adding in a routine pass
 
 ## The casino floor's trailer (2026-10-08)
 
-Spins grew a 136-byte trailer (`casino_core::observe::Observable`) and the reveal may schedule a
+Spins grew a 136-byte trailer (`casino_core::observe::Observable`, since grown to 344; below) and the reveal may schedule a
 publish on the casino floor. Read for what a player, or anyone, can do with it:
 
 - **The observer is the player's choice, and can only cost a task.** `resolve_bet` keeps the
@@ -109,6 +109,26 @@ publish on the casino floor. Read for what a player, or anyone, can do with it:
   program with the house's seeds, like creation; its address, and the permission keyed to it, are
   unchanged. A 504/512 spin is closed and created again as before. The house pays 136 bytes'
   more rent once per player.
+
+### Layout 2 (2026-10-09)
+
+The trailer is now 344 bytes (`OBSERVE2`) and adds what an onlooker at a real machine sees: the
+stake and what it paid. A spin is 1016 bytes.
+
+- **Old sizes are resized, never overwritten.** 664, 672 and 808 (layout 1, which no floor read)
+  grow to 1016 in place on the next bet; 504/512 are still closed and created again.
+  `Spin::generation` names every size and refuses any other, so an account of an unknown size is
+  refused before anything is resized, and the trailer is written only once the spin is 1016,
+  over its last 344 bytes: the terms and the generation are never under it. Only `Spin::observable`
+  (exactly 1016 and `OBSERVE2`) is read back.
+- **`paid` is shown, not paid.** The reveal prices the grid with `payout`, the function the collect
+  uses, so what the floor shows is what the vault would move; a machine the engine cannot price
+  shows 0 rather than keep the seed from landing (`unwrap_or(0)`). The collect writes the amount
+  it actually settled. Nothing reads `stake` or `paid` back; payouts still read only the head and
+  the terms.
+- **Nothing private is added.** `stake` is the machine's published stake, `paid` follows from the
+  public seed and terms, `bet` stays empty. The generation was already there and the floor never
+  copies it.
 
 ---
 

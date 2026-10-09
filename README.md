@@ -51,11 +51,13 @@ the engine still play it.
 | `["analytics"]` | Lifetime counters, written only by settle callbacks — every number is settled money. Delegated; TEE reads restricted to the analytics readers (the ops key and the dev key). |
 | `["spin", user]` | The player's bet, **ephemeral** and reused: created by the first stake's settle callback, marked collected by the payout's. A new bet needs a collected spin. Carries its own terms, copied at purchase, a generation that rejects VRF answers meant for an earlier bet, and the casino floor's trailer (below). |
 
-A spin is `[Spin 160][terms 504][generation 8][trailer 136]` = 808 bytes (`Spin::OBSERVED_SIZE`).
-Every earlier size still reads, and the next bet brings it up to date: 664 and 672 (no
-generation; no trailer) grow in place through the Magic program, the house paying the rent as it
-did at creation; 504 and 512 (terms from before run rules) are closed and created again. Either
-way the generation carries on.
+A spin is `[Spin 160][terms 504][generation 8][trailer 344]` = 1016 bytes (`Spin::OBSERVED_SIZE`).
+Every earlier size still reads, and the next bet brings it up to date: 664, 672 (no generation;
+no trailer) and 808 (the trailer's first, 136-byte layout, `Spin::FIRST_OBSERVED_SIZE`) grow in
+place through the Magic program, the house paying the rent as it did at creation, and the trailer
+is written over the last 344 bytes only once the spin is that size; 504 and 512 (terms from
+before run rules) are closed and created again. Either way the generation carries on. Any other
+size is refused.
 
 ## The flow
 
@@ -80,17 +82,26 @@ respinning.
 
 ## The casino floor
 
-The last 136 bytes of a spin are `casino_core::observe::Observable`: what the casino floor
-(`EzQPZ…`) shows of the bet on a station, read straight off this program's account so nothing a
-client says about a result is trusted. `kind` is `KIND_SLOTS`, `config_id` the machine, `result[0..32]`
-the seed, and `status` follows the spin:
+The last 344 bytes of a spin are `casino_core::observe::Observable` (layout 2, `OBSERVE2`): what
+the casino floor (`EzQPZ…`) shows of the bet on a station, read straight off this program's
+account so nothing a client says about a result is trusted. What an onlooker sees is the chips
+and the outcome: `kind` is `KIND_SLOTS`, `config_id` the machine, `stake` the machine's stake,
+`result[0..32]` the seed and `paid` what it pays. `bet` stays empty, since the machine is the
+whole bet. The `generation` is there for the floor to compare and is never shown. `status`
+follows the spin:
 
 ```
-ResolveBet ──▶ PENDING          observer = the station named on this settle, or none
-CallbackReveal ──▶ RESULT       round, result = the seed; publish if watched
-Hold / Gamble ──▶ PENDING       same observer, last result kept
-ResolveCollect ──▶ SETTLED
+ResolveBet ──▶ PENDING          observer = the station named on this settle, or none;
+                                stake = the machine's, paid = 0, last result kept
+CallbackReveal ──▶ RESULT       round, result = the seed, paid = what collecting now would pay;
+                                publish if watched
+Hold / Gamble ──▶ PENDING       same observer, stake (a decision takes none) and last result
+ResolveCollect ──▶ SETTLED      paid = what the vault paid
 ```
+
+`paid` at the reveal is `payout`, the same function the collect prices with, so on a hold or
+gamble machine it is what stopping now would pay, and the next reveal replaces it. It costs the
+callback about 7,800 CU, cheap next to the publish it may schedule.
 
 A seated player's client names the station as one more account after `ResolveBet`'s own on the
 vault settle; any account the floor program owns, with data, is taken as one, and a bet without
@@ -130,12 +141,12 @@ charge 150 CU a call):
 
 | instruction | CU |
 | --- | --- |
-| `ResolveBet`, creating the spin | 17,465 |
-| `ResolveBet`, reusing it | 15,311 |
-| `ResolveBet`, reusing it, at a station | 15,447 |
-| `CallbackReveal`, a spin without the trailer | 6,896 |
-| `CallbackReveal`, unwatched | 7,120 |
-| `CallbackReveal`, watched: scheduling the publish | 16,900 |
+| `ResolveBet`, creating the spin | 17,488 |
+| `ResolveBet`, reusing it | 15,364 |
+| `ResolveBet`, reusing it, at a station | 15,500 |
+| `CallbackReveal`, a spin without the trailer | 6,894 |
+| `CallbackReveal`, unwatched (pricing the grid) | 14,831 – 14,927 |
+| `CallbackReveal`, watched: scheduling the publish | 24,610 |
 | `Hold` | 5,884 |
 
 ## Operating it
