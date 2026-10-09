@@ -1,13 +1,14 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use casino_core::chain::*;
 use casino_core::magicblock::EPHEMERAL_VAULT_ID;
-use casino_core::{observe, pda, receipt, CoreError};
+use casino_core::observe::{self, Observable};
+use casino_core::{pda, receipt, CoreError};
 
 use crate::instructions::request_collect::payout;
 use crate::state::analytics::Analytics;
 use crate::state::spin::{Spin, SpinStatus};
 
-/// The settle callback marks the retained result as paid.
+/// The settle callback marks the retained result as paid, and shows the floor what it paid.
 /// Accounts: [receipt, vault_authority (signer), house, spin, ephemeral_vault, magic_program,
 ///            analytics]
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -60,6 +61,9 @@ impl ResolveCollect {
         }
 
         Spin::load_mut(spin_account)?.status = SpinStatus::Collected as u64;
-        Spin::observe(spin_account, observe::SETTLED)
+        match Spin::observable(spin_account) {
+            Some(trailer) => Observable { status: observe::SETTLED, paid: amount, ..trailer }.write(spin_account),
+            None => Ok(()),
+        }
     }
 }

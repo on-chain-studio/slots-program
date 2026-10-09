@@ -64,7 +64,8 @@ impl Hold {
         spin.round += 1;
         spin.status = SpinStatus::Bought as u64;
 
-        // Waiting on a seed again, for the same bet and whoever watches it.
+        // Waiting on a seed again, for the same bet and whoever watches it. A round decision
+        // takes no more stake, and the last result shows what it paid until the next one lands.
         Spin::observe(spin_account, observe::PENDING)
     }
 }

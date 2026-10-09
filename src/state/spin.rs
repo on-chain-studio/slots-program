@@ -58,6 +58,9 @@ impl Spin {
     /// With the floor's trailer after the generation: what every bet is placed at now. A spin at
     /// a smaller size is brought to this one by its next bet.
     pub const OBSERVED_SIZE: usize = Self::PERSISTENT_SIZE + observe::SIZE;
+    /// With the trailer's first layout (136 bytes, `OBSERVE1`), which no floor ever read. Its
+    /// next bet grows it to the current one in place.
+    pub const FIRST_OBSERVED_SIZE: usize = Self::PERSISTENT_SIZE + 136;
 
     /// The sizes before machines carried run rules (344-byte terms). A spin left at one of them
     /// is closed and re-created at the current size on its next bet, which needs its generation.
@@ -70,7 +73,7 @@ impl Spin {
         let at = match data.len() {
             Self::WITH_TERMS | Self::LEGACY_WITH_TERMS => return Ok(0),
             Self::LEGACY_PERSISTENT_SIZE => Self::LEGACY_WITH_TERMS,
-            Self::PERSISTENT_SIZE | Self::OBSERVED_SIZE => Self::WITH_TERMS,
+            Self::PERSISTENT_SIZE | Self::FIRST_OBSERVED_SIZE | Self::OBSERVED_SIZE => Self::WITH_TERMS,
             _ => return Err(ProgramError::InvalidAccountData),
         };
         let bytes = data.get(at..at + 8).ok_or(ProgramError::InvalidAccountData)?;
@@ -85,14 +88,15 @@ impl Spin {
     }
 
     /// The floor's view of this spin, on a spin that has one: a spin last bet on before the
-    /// trailer existed gets it with its next bet, and until then there is nothing to show.
+    /// trailer existed, or under its first layout, gets it with its next bet, and until then
+    /// there is nothing to show.
     pub fn observable(account: &AccountInfo) -> Option<Observable> {
         if account.data_len() != Self::OBSERVED_SIZE { return None; }
         Observable::read_account(account)
     }
 
-    /// Moves the trailer to `status`, keeping its observer and its last result. Nothing to do on
-    /// a spin without one.
+    /// Moves the trailer to `status`, keeping everything else: the observer, the stake, the last
+    /// result and what it paid. Nothing to do on a spin without one.
     pub fn observe(account: &AccountInfo, status: u8) -> ProgramResult {
         match Self::observable(account) {
             Some(trailer) => Observable { status, ..trailer }.write(account),

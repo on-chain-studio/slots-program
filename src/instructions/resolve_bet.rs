@@ -73,17 +73,22 @@ impl ResolveBet {
         let terms = *Config::item(config_account, self.machine_id)?;
 
         // What the floor was last shown stays on show until this bet's seed lands over it; a
-        // spin from before the trailer shows its last seed.
-        let trailer = Spin::observable(spin_account).unwrap_or_else(|| {
-            let mut fresh = Observable::new(observe::KIND_SLOTS);
-            fresh.result[..32].copy_from_slice(&previous_seed);
-            fresh
-        });
+        // spin from before the trailer, or from its first layout, shows its last seed.
+        let shown = match Spin::observable(spin_account) {
+            Some(trailer) => trailer.result,
+            None => {
+                let mut result = [0; 64];
+                result[..32].copy_from_slice(&previous_seed);
+                result
+            }
+        };
 
         // Terms from before machines carried run rules are another shape: that spin is closed
-        // and created again. Anything since only grew at the end, so it grows in place, and its
-        // address and the permission keyed to it stay. The house sponsors the difference, as it
-        // did the rent.
+        // and created again. Anything since only grew at the end — the generation, then the
+        // trailer, then the trailer's second layout — so it grows in place, and its address and
+        // the permission keyed to it stay. The trailer is written only once the spin is at its
+        // full size, always over the last bytes, never over the terms or the generation. The
+        // house sponsors the difference, as it did the rent.
         if spin_account.data_len() != 0 && spin_account.data_len() < Spin::WITH_TERMS {
             receipt::close(magic_program, house, spin_account, ephemeral_vault, house_bump)?;
         }
@@ -112,13 +117,18 @@ impl ResolveBet {
             s.seed = previous_seed;
         }
         Spin::write_terms(spin_account, &terms)?;
+        // The machine's stake is the whole bet: a slot takes nothing more once it is paid for, and
+        // nothing is paid back until a seed lands.
         Observable {
             status: observe::PENDING,
             generation,
             round: 0,
             config_id: self.machine_id,
+            stake: terms.stake_lamports,
+            paid: 0,
             observer: observe::observer_from(rest),
-            ..trailer
+            result: shown,
+            ..Observable::new(observe::KIND_SLOTS)
         }
         .write(spin_account)?;
 

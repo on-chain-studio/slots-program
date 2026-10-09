@@ -469,8 +469,24 @@ fn trailer(status: u8, observer: Pubkey, result: [u8; 64]) -> Observable {
     Observable { status, generation: 5, config_id: 0, observer: observer.to_bytes(), result, ..Observable::new(observe::KIND_SLOTS) }
 }
 
+/// The machine's stake, which is a slot bet's whole stake.
+const STAKE: u64 = 100_000_000;
+
+/// The trailer's first layout as a spin bet on under it holds it: 136 bytes, under `OBSERVE1`,
+/// with a seed in its result. Nothing reads it; the next bet writes the second layout over it.
+fn first_layout(result: [u8; 32]) -> Vec<u8> {
+    let mut old = b"OBSERVE1".to_vec();
+    old.extend_from_slice(&[observe::KIND_SLOTS, observe::SETTLED, 0, 0, 0, 0, 0, 0]);
+    old.extend_from_slice(&[0x5A; 56]);
+    old.extend_from_slice(&result);
+    old.extend_from_slice(&[0; 32]);
+    assert_eq!(old.len(), 136);
+    old
+}
+
 /// What a test's spin holds: its head, the terms as they were laid out at `size`, the
-/// generation where the size has one, and the trailer where it has that.
+/// generation where the size has one, and the trailer, in the layout of its time, where it has
+/// that.
 impl Table {
     fn spin_at(&self, size: usize, status: SpinStatus, round: u64, generation: u64, observed: Option<Observable>) -> Account {
         let mut account = self.spin_account(status, round);
@@ -479,13 +495,22 @@ impl Table {
             // Before run rules, terms were 344 bytes; the head is all a bet reads of them.
             account.data.truncate(Spin::SIZE + 344);
         }
-        if size == Spin::PERSISTENT_SIZE || size == Spin::OBSERVED_SIZE || size == Spin::SIZE + 344 + 8 {
+        if [Spin::PERSISTENT_SIZE, Spin::FIRST_OBSERVED_SIZE, Spin::OBSERVED_SIZE, Spin::SIZE + 344 + 8].contains(&size) {
             account.data.extend_from_slice(&generation.to_le_bytes());
+        }
+        if size == Spin::FIRST_OBSERVED_SIZE {
+            account.data.extend_from_slice(&first_layout([0xEE; 32]));
         }
         if size == Spin::OBSERVED_SIZE {
             account.data.extend_from_slice(bytemuck::bytes_of(&observed.unwrap_or(Observable::new(observe::KIND_SLOTS))));
         }
         assert_eq!(account.data.len(), size);
+        account
+    }
+
+    /// The same spin with `seed` as its unapplied seed.
+    fn seeded(&self, mut account: Account, seed: [u8; 32]) -> Account {
+        bytemuck::from_bytes_mut::<Spin>(&mut account.data[..Spin::SIZE]).seed = seed;
         account
     }
 
@@ -545,6 +570,24 @@ fn books() -> Account {
     a.discriminator = analytics::DISCRIMINATOR;
     a.version = analytics::VERSION;
     owned(bytemuck::bytes_of(&a).to_vec())
+}
+
+/// What the test machine pays for a spin's head, as the collect prices it.
+fn pays(spin: &Spin) -> u64 {
+    slots::instructions::request_collect::payout(spin, &terms()).unwrap()
+}
+
+/// A seed whose grid wins (or loses) on the test machine from the head a test spin starts with.
+fn seed_that(table: &Table, wins: bool) -> [u8; 32] {
+    let head = *bytemuck::from_bytes::<Spin>(&table.spin_account(SpinStatus::Rolled, 1).data[..Spin::SIZE]);
+    (0..=255u8)
+        .map(|b| [b; 32])
+        .find(|&seed| (pays(&Spin { seed, ..head }) > 0) == wins)
+        .expect("no such seed")
+}
+
+fn winning_seed(table: &Table) -> [u8; 32] {
+    seed_that(table, true)
 }
 
 fn vault_authority() -> Pubkey {
@@ -608,8 +651,8 @@ fn a_first_bet_creates_the_spin_with_its_trailer() {
     assert_eq!(table.generation_after(&result.resulting_accounts), 1);
     assert_eq!(
         table.trailer_after(&result.resulting_accounts),
-        Observable { status: observe::PENDING, generation: 1, ..Observable::new(observe::KIND_SLOTS) },
-        "paid, unwatched, with nothing to show yet"
+        Observable { status: observe::PENDING, generation: 1, stake: STAKE, ..Observable::new(observe::KIND_SLOTS) },
+        "staked, unwatched, with nothing to show or pay yet"
     );
     println!("resolve_bet, creating the spin: {} CU", result.compute_units_consumed);
 }
@@ -618,17 +661,20 @@ fn a_first_bet_creates_the_spin_with_its_trailer() {
 #[ignore = "needs cargo build-sbf"]
 fn a_bet_brings_a_spin_of_any_earlier_size_to_the_observed_one() {
     // 504 and 512 are from before run rules (terms of another shape): closed, then created again.
-    // 664 and 672 only lack what came after: grown in place. 808 is already there.
+    // 664, 672 and 808 (the trailer's first layout) only lack what came after: grown in place.
+    // 1016 is already there.
     let table = Table::new();
     let shown = [3u8; 64];
+    let last = Observable { stake: 9, paid: 4 * STAKE, ..trailer(observe::SETTLED, Pubkey::new_unique(), shown) };
     for (size, generation, calls) in [
         (Spin::SIZE + 344, 0, vec![14, 12]),
         (Spin::SIZE + 344 + 8, 6, vec![14, 12]),
         (Spin::WITH_TERMS, 0, vec![13]),
         (Spin::PERSISTENT_SIZE, 6, vec![13]),
+        (Spin::FIRST_OBSERVED_SIZE, 6, vec![13]),
         (Spin::OBSERVED_SIZE, 6, vec![]),
     ] {
-        let before = table.spin_at(size, SpinStatus::Collected, 2, generation, Some(trailer(observe::SETTLED, Pubkey::new_unique(), shown)));
+        let before = table.spin_at(size, SpinStatus::Collected, 2, generation, Some(last));
         let ix = resolve_bet(&table, &[]);
         let result = with_stand_ins().process_instruction(&ix, &bet_accounts(&ix, &table, before, vec![]));
         assert_eq!(result.raw_result, Ok(()), "{size}");
@@ -639,15 +685,28 @@ fn a_bet_brings_a_spin_of_any_earlier_size_to_the_observed_one() {
         let s = table.spin_after(after);
         assert_eq!((s.status, s.round), (SpinStatus::Bought as u64, 0), "{size}");
         assert_eq!(s.seed, [7; 32], "{size}: the last seed stays until this bet's lands");
+        assert_eq!(table.data_after(after)[Spin::SIZE..Spin::WITH_TERMS], *bytemuck::bytes_of(&terms()), "{size}: the terms are untouched");
         let t = table.trailer_after(after);
         assert_eq!((t.kind, t.status, t.generation, t.round, t.config_id), (observe::KIND_SLOTS, observe::PENDING, generation + 1, 0, 0), "{size}");
+        assert_eq!((t.stake, t.paid), (STAKE, 0), "{size}: this bet's stake, and nothing paid on it yet");
         assert_eq!(t.observer, [0; 32], "{size}: a bet without a station clears the last one");
+        assert_eq!(t.bet, [0; 192], "{size}: a slot's bet is its machine");
         if size == Spin::OBSERVED_SIZE {
             assert_eq!(t.result, shown, "the result the floor last saw is kept whole");
         } else {
-            assert_eq!(t.result[..32], [7; 32], "{size}: a spin from before the trailer shows its last seed");
+            assert_eq!(t.result[..32], [7; 32], "{size}: a spin from before this layout shows its last seed");
             assert_eq!(t.result[32..], [0; 32]);
         }
+    }
+
+    // A size no spin was ever placed at is not guessed at.
+    for size in [Spin::OBSERVED_SIZE - 8, Spin::OBSERVED_SIZE + 1] {
+        let mut before = table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Collected, 2, 6, None);
+        before.data.resize(size, 0);
+        let ix = resolve_bet(&table, &[]);
+        let result = with_stand_ins().process_instruction(&ix, &bet_accounts(&ix, &table, before, vec![]));
+        assert_eq!(result.raw_result, failure(InstructionError::InvalidAccountData), "{size}");
+        assert_eq!(magic_calls(), Vec::<u32>::new(), "{size}");
     }
 }
 
@@ -759,7 +818,11 @@ fn the_callback_is_handed_the_publish_accounts_only_while_a_station_watches() {
 
 /// The oracle's answer for round `round` of bet 5, with `rest` after the spin.
 fn callback(table: &Table, round: u64, rest: &[AccountMeta]) -> Instruction {
-    let mut ix = reveal(table, [9; 32], round, &[]);
+    callback_with(table, [9; 32], round, rest)
+}
+
+fn callback_with(table: &Table, seed: [u8; 32], round: u64, rest: &[AccountMeta]) -> Instruction {
+    let mut ix = reveal(table, seed, round, &[]);
     ix.data[8 + 32 + 8..8 + 32 + 16].copy_from_slice(&5u64.to_le_bytes());
     ix.accounts.extend_from_slice(rest);
     ix
@@ -790,17 +853,23 @@ fn callback_accounts(ix: &Instruction, spin: Account, magic_account: Account) ->
 #[ignore = "needs cargo build-sbf"]
 fn a_landed_seed_is_the_trailer_s_result() {
     let table = Table::fixed();
-    let previous = trailer(observe::PENDING, Pubkey::default(), [3; 64]);
-    let ix = callback(&table, 1, &[]);
-    let spin = table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Requested, 1, 5, Some(previous));
-    let result = mollusk().process_instruction(&ix, &callback_accounts(&ix, spin, wallet()));
-    assert_eq!(result.raw_result, Ok(()));
-    let t = table.trailer_after(&result.resulting_accounts);
-    assert_eq!((t.status, t.round, t.generation), (observe::RESULT, 1, 5));
-    assert_eq!(t.result[..32], [9; 32]);
-    assert_eq!(t.result[32..], [3; 32], "only the seed's bytes are the seed's");
-    assert_eq!(table.spin_after(&result.resulting_accounts).seed, [9; 32]);
-    println!("callback_reveal, unwatched: {} CU", result.compute_units_consumed);
+    let previous = Observable { stake: STAKE, paid: 77, ..trailer(observe::PENDING, Pubkey::default(), [3; 64]) };
+    let win = winning_seed(&table);
+    for seed in [win, seed_that(&table, false)] {
+        let ix = callback_with(&table, seed, 1, &[]);
+        let spin = table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Requested, 1, 5, Some(previous));
+        let result = mollusk().process_instruction(&ix, &callback_accounts(&ix, spin, wallet()));
+        assert_eq!(result.raw_result, Ok(()));
+        let t = table.trailer_after(&result.resulting_accounts);
+        assert_eq!((t.status, t.round, t.generation, t.stake), (observe::RESULT, 1, 5, STAKE));
+        assert_eq!(t.result[..32], seed);
+        assert_eq!(t.result[32..], [3; 32], "only the seed's bytes are the seed's");
+        let landed = table.spin_after(&result.resulting_accounts);
+        assert_eq!(landed.seed, seed);
+        assert_eq!(t.paid, pays(&landed), "what collecting this grid would pay");
+        assert_eq!(t.paid > 0, seed == win);
+        println!("callback_reveal, unwatched, {}: {} CU", if seed == win { "a win" } else { "a loss" }, result.compute_units_consumed);
+    }
 
     // A spin not yet at the observed size just lands its seed.
     let ix = callback(&table, 1, &[]);
@@ -873,7 +942,8 @@ fn the_publish_is_one_task_the_house_schedules_for_the_floor() {
 fn a_round_decision_is_pending_again_for_the_same_station() {
     let table = Table::new();
     let station = Pubkey::new_unique();
-    let mut landed = trailer(observe::RESULT, station, [0; 64]);
+    // Neither decision takes more stake; what the seen grid paid shows until the next one lands.
+    let mut landed = Observable { stake: STAKE, paid: 3 * STAKE, ..trailer(observe::RESULT, station, [0; 64]) };
     landed.result[..32].copy_from_slice(&[7; 32]);
     let result = mollusk().process_instruction(
         &hold(table.user, true, table.spin, 0b011),
@@ -895,8 +965,9 @@ fn a_round_decision_is_pending_again_for_the_same_station() {
 fn a_collected_spin_is_settled_for_the_floor() {
     let table = Table::new();
     let station = Pubkey::new_unique();
-    let mut landed = trailer(observe::RESULT, station, [0; 64]);
-    landed.result[..32].copy_from_slice(&[7; 32]);
+    let win = winning_seed(&table);
+    let mut landed = Observable { stake: STAKE, paid: 1, ..trailer(observe::RESULT, station, [0; 64]) };
+    landed.result[..32].copy_from_slice(&win);
     let mut data = 23u64.to_le_bytes().to_vec();
     data.extend_from_slice(table.user.as_ref());
     let ix = Instruction::new_with_bytes(program(), &data, vec![
@@ -914,13 +985,18 @@ fn a_collected_spin_is_settled_for_the_floor() {
         (k(0), wallet()),
         (k(1), wallet()),
         (k(2), owned(vec![])),
-        (k(3), table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Rolled, 2, 5, Some(landed))),
+        (k(3), table.seeded(table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Rolled, 2, 5, Some(landed)), win)),
         (k(4), wallet()),
         (k(5), wallet()),
         (k(6), books()),
     ];
     let result = mollusk().process_instruction(&ix, &accounts);
     assert_eq!(result.raw_result, Ok(()));
-    assert_eq!(table.spin_after(&result.resulting_accounts).status, SpinStatus::Collected as u64);
-    assert_eq!(table.trailer_after(&result.resulting_accounts), Observable { status: observe::SETTLED, ..landed });
+    let after = table.spin_after(&result.resulting_accounts);
+    assert_eq!(after.status, SpinStatus::Collected as u64);
+    let paid = pays(&after);
+    assert!(paid > 0);
+    assert_eq!(table.trailer_after(&result.resulting_accounts), Observable { status: observe::SETTLED, paid, ..landed }, "what the vault moved");
+    let books = result.resulting_accounts.iter().find(|(key, _)| *key == k(6)).unwrap();
+    assert_eq!(bytemuck::from_bytes::<Analytics>(&books.1.data).payouts[0].amount, paid, "and what the books recorded");
 }
