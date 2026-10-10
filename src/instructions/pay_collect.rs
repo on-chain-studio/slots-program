@@ -116,8 +116,7 @@ pub fn instruction(house: &Pubkey, spin: &Pubkey, user: &Pubkey, generation: u64
     }
 }
 
-/// Schedules the house's payout of `spin`, fired at once and again each `PAY_MS` for a ledger
-/// that is briefly away.
+/// Schedules the house's payout of `spin`, fired once, at once.
 #[allow(clippy::too_many_arguments)]
 pub fn schedule(
     house: &AccountInfo,

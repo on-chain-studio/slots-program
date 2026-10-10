@@ -20,10 +20,10 @@ pub const PRIVATE_CASINO: Pubkey = Pubkey::from_str_const("EzQPZpLj8DccG7M7VCyr9
 /// derive it.
 pub const ANALYTICS: Pubkey = Pubkey::from_str_const("68XX3KGW2DjKgXPt9kUzq8pvUAdMze4BZzs3QhrVL6aa");
 
-/// How often the house's payout task fires, and how many times: once at once, then again for a
-/// ledger that is briefly away. Every fire after the one that pays does nothing.
-pub const PAY_MS: u64 = 1_000;
-pub const PAY_ATTEMPTS: u64 = 15;
+/// The house's payout task fires once. A payout that cannot be made is left uncollected, in the
+/// open on the play's trailer, rather than retried in the hope it fixes itself.
+pub const PAY_MS: u64 = 1;
+pub const PAY_ATTEMPTS: u64 = 1;
 
 /// Just the house. There is no progressive jackpot here: with no pot to feed, the whole return
 /// target lives in the machines themselves — 90% RTP, where scratch cards run 80% + 10% pot.

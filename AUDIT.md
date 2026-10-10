@@ -158,8 +158,8 @@ hit this because each schedules its own payout. Owner-approved: slots does the s
   by the house PDA (a credit needs no consent), records analytics as `ResolveCollect` did, marks
   the spin `Collected` and the trailer `SETTLED` with `paid`.
 - The generation/round binding is new and load-bearing: unlike a receipt (atomic, see
-  "Stale-receipt binding" above, which no longer covers the payout), the task outlives the request
-  and fires up to 15 times. Without it a later fire could pay the player's next bet, or a grid
+  "Stale-receipt binding" above, which no longer covers the payout), the task runs after the request,
+  once, at once. Without it the fire could pay the player's next bet, or a grid
   reached by a hold/gamble taken after asking, with no request — i.e. collect over an open
   decision.
 - `ResolveCollect` (23) is unchanged and kept only for a receipt still in flight; nothing creates

@@ -1228,8 +1228,8 @@ fn the_floor_s_house_requests_a_collect_with_nothing_left_to_decide() {
     let id = slots::instructions::pay_collect::id(&core_key(table.spin));
     assert_eq!(id, casino_core::task::id(&[slots::ID.as_ref(), b"collect", table.spin.as_ref()]));
     assert_eq!(task[4..12], id.to_le_bytes());
-    assert_eq!(task[12..20], 1_000u64.to_le_bytes(), "a second apart");
-    assert_eq!(task[20..28], 15u64.to_le_bytes(), "fifteen fires");
+    assert_eq!(task[12..20], 1u64.to_le_bytes(), "at once");
+    assert_eq!(task[20..28], 1u64.to_le_bytes(), "one fire, never retried");
     let (target, accounts) = task_accounts(task);
     assert_eq!(target, program());
     let house = pda(&[b"house"]);
