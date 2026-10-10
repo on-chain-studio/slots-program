@@ -26,7 +26,7 @@ use solana_pubkey::Pubkey;
 use slots::error::GameError;
 use slots::instructions::set_machine::{InitSymbol, SetMachine};
 use slots::state::analytics::{self, Analytics};
-use slots::state::config::{self, Config, MachineConfig, GAMBLE_FAIR, MODE_HOLD};
+use slots::state::config::{self, Config, MachineConfig, GAMBLE_FAIR, MODE_GAMBLE, MODE_HOLD, MODE_LINES};
 use slots::state::spin::{self, Spin, SpinStatus};
 
 fn key(bytes: [u8; 32]) -> Pubkey {
@@ -43,14 +43,19 @@ fn mollusk() -> Mollusk {
 
 /// A three-reel hold machine with three grids.
 fn terms() -> MachineConfig {
+    machine(MODE_HOLD)
+}
+
+/// The same strips in `mode`: three grids to hold between, or three rungs to gamble up.
+fn machine(mode: u8) -> MachineConfig {
     let strip: Vec<u8> = (0..20).map(|i| (i % 6) as u8).collect();
     SetMachine {
         index: 0,
-        mode: MODE_HOLD,
+        mode,
         stake_lamports: 100_000_000,
         row_count: 3,
         rounds: 3,
-        gamble_rungs: 0,
+        gamble_rungs: 3,
         gamble_win: GAMBLE_FAIR,
         mint: [0; 32],
         strips: vec![strip.clone(), strip.clone(), strip],
@@ -432,12 +437,38 @@ declare_process_instruction!(FakeVrf, STAND_IN_CU, |invoke_context| {
     Ok(())
 });
 
+fn vault() -> Pubkey {
+    fixed(casino_core::ids::VAULT_PROGRAM)
+}
+
+thread_local! {
+    /// The accounts of every call the vault stand-in took: key, signer, writable.
+    static VAULT_ACCOUNTS: RefCell<Vec<Vec<(Pubkey, bool, bool)>>> = const { RefCell::new(Vec::new()) };
+}
+
+// The vault: a receipt is taken as asked, with who signed it kept.
+declare_process_instruction!(FakeVault, STAND_IN_CU, |invoke_context| {
+    let context = invoke_context.transaction_context.get_current_instruction_context()?;
+    record(vault(), context.get_instruction_data());
+    let mut accounts = Vec::new();
+    for i in 0..context.get_number_of_instruction_accounts() {
+        let key = Pubkey::new_from_array(context.get_key_of_instruction_account(i)?.to_bytes());
+        accounts.push((key, context.is_instruction_account_signer(i)?, context.is_instruction_account_writable(i)?));
+    }
+    VAULT_ACCOUNTS.with(|v| v.borrow_mut().push(accounts));
+    Ok(())
+});
+
 /// The program with the stand-ins at their addresses, and nothing recorded yet.
 fn with_stand_ins() -> Mollusk {
     CALLS.with(|c| c.borrow_mut().clear());
+    VAULT_ACCOUNTS.with(|v| v.borrow_mut().clear());
     let mut m = mollusk();
-    let fakes: [(Pubkey, &'static str, BuiltinFunctionRegisterer); 2] =
-        [(magic(), "fake_magic", FakeMagic::register), (vrf_program(), "fake_vrf", FakeVrf::register)];
+    let fakes: [(Pubkey, &'static str, BuiltinFunctionRegisterer); 3] = [
+        (magic(), "fake_magic", FakeMagic::register),
+        (vrf_program(), "fake_vrf", FakeVrf::register),
+        (vault(), "fake_vault", FakeVault::register),
+    ];
     for (program_id, name, register_fn) in fakes {
         m.program_cache.add_builtin(Builtin { program_id, name, register_fn });
     }
@@ -943,14 +974,15 @@ fn a_round_decision_is_pending_again_for_the_same_station() {
     let table = Table::new();
     let station = Pubkey::new_unique();
     // Neither decision takes more stake; what the seen grid paid shows until the next one lands.
-    let mut landed = Observable { stake: STAKE, paid: 3 * STAKE, ..trailer(observe::RESULT, station, [0; 64]) };
+    // The decision is taken, so none is open.
+    let mut landed = Observable { stake: STAKE, paid: 3 * STAKE, flags: observe::FLAG_DECIDING, ..trailer(observe::RESULT, station, [0; 64]) };
     landed.result[..32].copy_from_slice(&[7; 32]);
     let result = mollusk().process_instruction(
         &hold(table.user, true, table.spin, 0b011),
         &[(table.user, wallet()), (table.spin, table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Rolled, 0, 5, Some(landed)))],
     );
     assert_eq!(result.raw_result, Ok(()));
-    assert_eq!(table.trailer_after(&result.resulting_accounts), Observable { status: observe::PENDING, ..landed });
+    assert_eq!(table.trailer_after(&result.resulting_accounts), Observable { status: observe::PENDING, flags: 0, ..landed });
 
     // A spin bet on before the trailer is held as it always was.
     let result = mollusk().process_instruction(
@@ -966,7 +998,7 @@ fn a_collected_spin_is_settled_for_the_floor() {
     let table = Table::new();
     let station = Pubkey::new_unique();
     let win = winning_seed(&table);
-    let mut landed = Observable { stake: STAKE, paid: 1, ..trailer(observe::RESULT, station, [0; 64]) };
+    let mut landed = Observable { stake: STAKE, paid: 1, flags: observe::FLAG_DECIDING, ..trailer(observe::RESULT, station, [0; 64]) };
     landed.result[..32].copy_from_slice(&win);
     let mut data = 23u64.to_le_bytes().to_vec();
     data.extend_from_slice(table.user.as_ref());
@@ -996,7 +1028,252 @@ fn a_collected_spin_is_settled_for_the_floor() {
     assert_eq!(after.status, SpinStatus::Collected as u64);
     let paid = pays(&after);
     assert!(paid > 0);
-    assert_eq!(table.trailer_after(&result.resulting_accounts), Observable { status: observe::SETTLED, paid, ..landed }, "what the vault moved");
+    assert_eq!(table.trailer_after(&result.resulting_accounts), Observable { status: observe::SETTLED, flags: 0, paid, ..landed }, "what the vault moved");
     let books = result.resulting_accounts.iter().find(|(key, _)| *key == k(6)).unwrap();
     assert_eq!(bytemuck::from_bytes::<Analytics>(&books.1.data).payouts[0].amount, paid, "and what the books recorded");
+}
+
+// ── the floor's collect ────────────────────────────────────────────────────────────────────
+//
+// A watched spin's publish carries what the floor needs to collect it as the casino floor's house:
+// this program's RequestCollect with that house as the wallet, then the vault's settle of the
+// receipt it makes. The floor holds nothing else, so every account both take must be one the
+// publish names.
+
+/// The spin, bet on `mode`'s machine.
+fn in_mode(mut account: Account, mode: u8) -> Account {
+    account.data[Spin::SIZE..Spin::WITH_TERMS].copy_from_slice(bytemuck::bytes_of(&machine(mode)));
+    account
+}
+
+/// The same spin with `pending` riding, as a gamble leaves it.
+fn riding(mut account: Account, pending: u64) -> Account {
+    bytemuck::from_bytes_mut::<Spin>(&mut account.data[..Spin::SIZE]).pending = pending;
+    account
+}
+
+/// A seed on which `spin` pays (or does not) when collected, on the machine it was bet on.
+fn seed_paying(spin: &Account, wins: bool) -> [u8; 32] {
+    let head = *bytemuck::from_bytes::<Spin>(&spin.data[..Spin::SIZE]);
+    let terms = *bytemuck::from_bytes::<MachineConfig>(&spin.data[Spin::SIZE..Spin::WITH_TERMS]);
+    (0..=255u8)
+        .map(|b| [b; 32])
+        .find(|&seed| (slots::instructions::request_collect::payout(&Spin { seed, ..head }, &terms).unwrap() > 0) == wins)
+        .expect("no such seed")
+}
+
+fn core_key(k: Pubkey) -> casino_core::chain::Pubkey {
+    casino_core::chain::Pubkey::new_from_array(k.to_bytes())
+}
+
+/// Everything a publish for `table`'s spin at `station` names, as the scheduler fires it: the
+/// publish's own seven accounts, then the collect's eleven. Key, signer, writable.
+fn the_floor_holds(table: &Table, station: Pubkey) -> Vec<(Pubkey, bool, bool)> {
+    let house = core_key(pda(&[b"house"]));
+    let publish = observe::publish_instruction(&house, &core_key(station), &table.user.to_bytes(), &core_key(table.spin));
+    let collect = observe::collect_metas(&slots::ID, &house, &core_key(table.user), &slots::constants::ANALYTICS);
+    publish.accounts.iter().chain(collect.iter()).map(|m| (fixed(m.pubkey), m.is_signer, m.is_writable)).collect()
+}
+
+/// The accounts of the one instruction a task fires: after the tag, the id, the interval, the
+/// iterations, the instruction count and the instruction's program.
+fn task_accounts(task: &[u8]) -> (Pubkey, Vec<(Pubkey, bool, bool)>) {
+    let at = 4 + 8 + 8 + 8 + 8;
+    let program = key(task[at..at + 32].try_into().unwrap());
+    let count = u64::from_le_bytes(task[at + 32..at + 40].try_into().unwrap()) as usize;
+    let (metas, _) = task[at + 40..at + 40 + count * 34].as_chunks::<34>();
+    (program, metas.iter().map(|m| (key(m[..32].try_into().unwrap()), m[32] == 1, m[33] == 1)).collect())
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_watched_spin_s_publish_carries_the_floor_s_collect() {
+    let table = Table::fixed();
+    let station = Pubkey::new_unique();
+    let spin = in_mode(table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Requested, 0, 5, Some(trailer(observe::PENDING, station, [0; 64]))), MODE_LINES);
+    let ix = callback_with(&table, seed_paying(&spin, true), 0, &publish_metas());
+    let result = with_stand_ins().process_instruction(&ix, &callback_accounts(&ix, spin, builtin(magic(), "fake_magic")));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![6], "one task scheduled");
+    let (program, accounts) = task_accounts(&calls_to(magic())[0]);
+    assert_eq!(program, fixed(casino_core::ids::FLOOR));
+    assert_eq!(accounts, the_floor_holds(&table, station));
+    assert_eq!(accounts.len(), 7 + observe::COLLECT_ACCOUNTS);
+    let t = table.trailer_after(&result.resulting_accounts);
+    assert_eq!((t.status, t.flags), (observe::RESULT, 0), "a line spin leaves nothing to decide");
+    assert!(t.paid > 0);
+    println!("callback_reveal, watched, scheduling the collecting publish: {} CU (stand-in included)", result.compute_units_consumed);
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn the_floor_is_told_a_decision_is_open_exactly_while_one_is() {
+    let table = Table::new();
+    let station = Pubkey::new_unique();
+    // Three grids to hold between, three rungs to gamble up.
+    for (mode, round, wins, deciding) in [
+        (MODE_LINES, 0, true, false),
+        (MODE_LINES, 0, false, false),
+        (MODE_HOLD, 0, false, true),
+        (MODE_HOLD, 1, true, true),
+        (MODE_HOLD, 2, true, false),
+        (MODE_GAMBLE, 0, true, true),
+        (MODE_GAMBLE, 0, false, false),
+        (MODE_GAMBLE, 2, true, true),
+        (MODE_GAMBLE, 2, false, false),
+        (MODE_GAMBLE, 3, true, false),
+    ] {
+        let watched = Some(trailer(observe::PENDING, station, [0; 64]));
+        let spin = riding(in_mode(table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Requested, round, 5, watched), mode), STAKE);
+        let ix = callback_with(&table, seed_paying(&spin, wins), round, &[]);
+        let result = mollusk().process_instruction(&ix, &callback_accounts(&ix, spin, wallet()));
+        assert_eq!(result.raw_result, Ok(()), "{mode} {round}");
+        let t = table.trailer_after(&result.resulting_accounts);
+        assert_eq!(t.paid > 0, wins, "{mode} {round}");
+        assert_eq!(t.flags, if deciding { observe::FLAG_DECIDING } else { 0 }, "mode {mode}, round {round}, a win: {wins}");
+        let landed = table.spin_after(&result.resulting_accounts);
+        assert_eq!(slots::instructions::request_collect::deciding(&landed, &machine(mode), t.paid), deciding, "the collect's own rule");
+    }
+}
+
+/// RequestCollect as the floor sends it: every account from what its publish holds, as writable as
+/// it is there, and the floor's house signing.
+fn floor_collect(table: &Table, station: Pubkey) -> Instruction {
+    let holds = the_floor_holds(table, station);
+    let house = core_key(pda(&[b"house"]));
+    let floor_house = fixed(casino_core::ids::FLOOR_HOUSE);
+    let accounts = [
+        table.user,
+        pda(&[b"house"]),
+        table.spin,
+        fixed(casino_core::receipt::address(&slots::ID, &casino_core::ids::FLOOR_HOUSE)),
+        fixed(casino_core::ids::EPHEMERAL_VAULT_ID),
+        magic(),
+        vault(),
+        floor_house,
+        fixed(casino_core::vault::ledger(&house)),
+        fixed(casino_core::ids::MAGIC_CONTEXT_ID),
+    ]
+    .map(|k| {
+        let &(_, _, is_writable) = holds.iter().find(|(held, ..)| *held == k).expect("the publish names it");
+        AccountMeta { pubkey: k, is_signer: k == floor_house, is_writable }
+    });
+    Instruction::new_with_bytes(program(), &22u64.to_le_bytes(), accounts.to_vec())
+}
+
+fn collect_accounts(ix: &Instruction, spin: Account) -> Vec<(Pubkey, Account)> {
+    let k = |i: usize| ix.accounts[i].pubkey;
+    vec![
+        (k(0), wallet()),
+        (k(1), owned(vec![])),
+        (k(2), spin),
+        (k(3), wallet()),
+        (k(4), wallet()),
+        (k(5), builtin(magic(), "fake_magic")),
+        (k(6), builtin(vault(), "fake_vault")),
+        (k(7), wallet()),
+        (k(8), wallet()),
+        (k(9), wallet()),
+    ]
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn the_floor_s_house_collects_a_spin_with_nothing_left_to_decide() {
+    let table = Table::fixed();
+    let station = Pubkey::new_unique();
+    let ix = floor_collect(&table, station);
+    let landed = Some(trailer(observe::RESULT, station, [0; 64]));
+    let spin = in_mode(table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Rolled, 0, 5, landed), MODE_LINES);
+    let spin = table.seeded(spin.clone(), seed_paying(&spin, true));
+    let paid = pays_on(&spin);
+    let result = with_stand_ins().process_instruction(&ix, &collect_accounts(&ix, spin));
+    assert_eq!(result.raw_result, Ok(()));
+    println!("request_collect, the floor's house: {} CU (stand-in included)", result.compute_units_consumed);
+
+    // The receipt: the floor's house consents, the game's house pays the player what the spin
+    // pays, and the vault calls back ResolveCollect.
+    let created = VAULT_ACCOUNTS.with(|v| v.borrow().clone());
+    let floor_house = fixed(casino_core::ids::FLOOR_HOUSE);
+    assert_eq!(created, vec![vec![
+        (pda(&[b"house"]), true, true),
+        (ix.accounts[8].pubkey, false, true),
+        (floor_house, true, false),
+        (ix.accounts[3].pubkey, false, true),
+        (ix.accounts[4].pubkey, false, true),
+        (magic(), false, false),
+        (ix.accounts[9].pubkey, false, true),
+    ]]);
+    let receipt = &calls_to(vault())[0];
+    let contains = |needle: &[u8]| receipt.windows(needle.len()).any(|w| w == needle);
+    let movement = [&[0; 32][..], &paid.to_le_bytes(), &[1, 0]].concat();
+    assert!(contains(&movement), "house to player, what the spin pays");
+    assert!(contains(&[table.user.as_ref(), pda(&[b"house"]).as_ref()].concat()), "the player's ledger, then the house's");
+    assert!(contains(&23u64.to_le_bytes()), "called back as ResolveCollect");
+
+    // The last grid of a hold machine is finished too.
+    let last = table.seeded(table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Rolled, 2, 5, landed), [7; 32]);
+    let result = with_stand_ins().process_instruction(&ix, &collect_accounts(&ix, last));
+    assert_eq!(result.raw_result, Ok(()));
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn the_floor_s_house_cannot_collect_while_the_player_is_deciding() {
+    let table = Table::new();
+    let station = Pubkey::new_unique();
+    let ix = floor_collect(&table, station);
+    let deciding = || table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Rolled, 0, 5, Some(trailer(observe::RESULT, station, [0; 64])));
+    let result = with_stand_ins().process_instruction(&ix, &collect_accounts(&ix, deciding()));
+    assert_eq!(result.raw_result, core(casino_core::CoreError::Unauthorized));
+    assert!(calls_to(vault()).is_empty(), "no receipt");
+
+    // The player's own session key still may: stopping early forfeits nothing.
+    let mut own = ix.clone();
+    own.accounts[7].pubkey = table.consenter;
+    own.accounts[3].pubkey = fixed(casino_core::receipt::address(&slots::ID, &core_key(table.consenter)));
+    let result = with_stand_ins().process_instruction(&own, &collect_accounts(&own, deciding()));
+    assert_eq!(result.raw_result, Ok(()));
+}
+
+#[test]
+fn the_floor_s_settle_takes_only_accounts_its_publish_names() {
+    let table = Table::new();
+    let holds = the_floor_holds(&table, Pubkey::new_unique());
+    let house = core_key(pda(&[b"house"]));
+    let human = core_key(table.user);
+    // The vault's SettleReceipt: receipt, authority, consenter, callback program, vault authority,
+    // ephemeral vault, Magic program, Magic context; the receipt's ledgers in its owners' order,
+    // the player's and the house's; the player's session store; then what it forwards to
+    // ResolveCollect after the receipt and its own authority: house, spin, ephemeral vault, Magic
+    // program, analytics. The vault itself is the program the floor calls.
+    for k in [
+        casino_core::receipt::address(&slots::ID, &casino_core::ids::FLOOR_HOUSE),
+        house,
+        casino_core::ids::FLOOR_HOUSE,
+        slots::ID,
+        casino_core::ids::VAULT_AUTHORITY,
+        casino_core::ids::EPHEMERAL_VAULT_ID,
+        casino_core::ids::MAGIC_PROGRAM_ID,
+        casino_core::ids::MAGIC_CONTEXT_ID,
+        casino_core::vault::ledger(&human),
+        casino_core::vault::ledger(&house),
+        casino_core::vault::session_store(&human),
+        core_key(table.spin),
+        slots::constants::ANALYTICS,
+        casino_core::ids::VAULT_PROGRAM,
+    ] {
+        assert!(holds.iter().any(|(held, ..)| *held == fixed(k)), "{k} is not in the publish");
+    }
+}
+
+#[test]
+fn the_analytics_constant_is_its_derivation() {
+    assert_eq!(fixed(slots::constants::ANALYTICS), pda(&[b"analytics"]));
+}
+
+/// What a test spin pays on the machine it was bet on.
+fn pays_on(spin: &Account) -> u64 {
+    let head = bytemuck::from_bytes::<Spin>(&spin.data[..Spin::SIZE]);
+    slots::instructions::request_collect::payout(head, bytemuck::from_bytes(&spin.data[Spin::SIZE..Spin::WITH_TERMS])).unwrap()
 }

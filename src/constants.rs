@@ -16,6 +16,10 @@ pub const ANALYTICS_READERS: [Pubkey; 2] = [DEV_KEY, OPS_KEY];
 /// The casino floor program. It is top-level over spins, so it must be a member of their permission.
 pub const PRIVATE_CASINO: Pubkey = Pubkey::from_str_const("EzQPZpLj8DccG7M7VCyr9kEm4wFLZi6pDGfxrAsLNz6z");
 
+/// `["analytics"]`, pinned so the reveal callback, which hands it to the floor's collect, need not
+/// derive it.
+pub const ANALYTICS: Pubkey = Pubkey::from_str_const("68XX3KGW2DjKgXPt9kUzq8pvUAdMze4BZzs3QhrVL6aa");
+
 /// Just the house. There is no progressive jackpot here: with no pot to feed, the whole return
 /// target lives in the machines themselves — 90% RTP, where scratch cards run 80% + 10% pot.
 pub const TREASURIES: [&[u8]; 1] = [b"house"];

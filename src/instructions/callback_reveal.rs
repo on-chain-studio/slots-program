@@ -3,7 +3,8 @@ use casino_core::chain::*;
 use casino_core::observe;
 use casino_core::{pda, vrf, CoreError};
 
-use crate::instructions::request_collect::payout;
+use crate::constants::ANALYTICS;
+use crate::instructions::request_collect::{deciding, payout};
 use crate::state::spin::{Spin, SpinStatus};
 
 /// The VRF oracle's answer: 32 bytes of randomness signed by the VRF identity scoped to this
@@ -12,8 +13,9 @@ use crate::state::spin::{Spin, SpinStatus};
 ///
 /// The seed is also the floor's result, shown with what it pays. If a station watches this bet,
 /// `RequestReveal` named the house, the Magic context and the Magic program after the spin, and
-/// with them the house schedules the floor's publish. A callback without them, requested before
-/// a station sat down or before this program knew how, just lands the seed.
+/// with them the house schedules the floor's publish, carrying what the floor needs to collect
+/// the spin itself once no decision is left open. A callback without them, requested before a
+/// station sat down or before this program knew how, just lands the seed.
 /// Accounts: [vrf_identity (signer), spin, house?, magic_context?, magic_program?]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct CallbackReveal {
@@ -60,10 +62,12 @@ impl CallbackReveal {
         trailer.round = spin.round;
         trailer.result[..32].copy_from_slice(&self.randomness);
         // What collecting now would pay: the same `payout` the collect runs, so the floor shows
-        // the number the vault will move. A hold or a gamble may still change it. It is only
-        // shown, so a machine the engine cannot price shows nothing rather than keep the seed
-        // from landing.
-        trailer.paid = payout(spin, Spin::terms(spin_account)?).unwrap_or(0);
+        // the number the vault will move. A hold or a gamble may still change it, and while one
+        // can the floor leaves the collect to the player. It is only shown, so a machine the
+        // engine cannot price shows nothing rather than keep the seed from landing.
+        let terms = Spin::terms(spin_account)?;
+        trailer.paid = payout(spin, terms).unwrap_or(0);
+        trailer.flags = if deciding(spin, terms, trailer.paid) { observe::FLAG_DECIDING } else { 0 };
         trailer.write(spin_account)?;
 
         if trailer.observer == [0; 32] {
@@ -76,9 +80,9 @@ impl CallbackReveal {
         if !observe::can_publish(&house, rest) {
             return Ok(());
         }
-        observe::schedule_publish(
+        observe::schedule_publish_collecting(
             program_id, house_account, &[b"house", &[house_bump]], magic_context, magic_program,
-            spin_account, &trailer.observer, &spin.user,
+            spin_account, &trailer.observer, &spin.user, &ANALYTICS,
         )
     }
 }

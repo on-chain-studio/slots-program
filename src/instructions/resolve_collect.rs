@@ -62,7 +62,7 @@ impl ResolveCollect {
 
         Spin::load_mut(spin_account)?.status = SpinStatus::Collected as u64;
         match Spin::observable(spin_account) {
-            Some(trailer) => Observable { status: observe::SETTLED, paid: amount, ..trailer }.write(spin_account),
+            Some(trailer) => Observable { status: observe::SETTLED, flags: 0, paid: amount, ..trailer }.write(spin_account),
             None => Ok(()),
         }
     }

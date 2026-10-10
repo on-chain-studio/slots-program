@@ -95,11 +95,12 @@ impl Spin {
         Observable::read_account(account)
     }
 
-    /// Moves the trailer to `status`, keeping everything else: the observer, the stake, the last
-    /// result and what it paid. Nothing to do on a spin without one.
+    /// Moves the trailer to `status`, keeping the observer, the stake, the last result and what
+    /// it paid. Its callers are a decision taken, so none is open any more. Nothing to do on a
+    /// spin without one.
     pub fn observe(account: &AccountInfo, status: u8) -> ProgramResult {
         match Self::observable(account) {
-            Some(trailer) => Observable { status, ..trailer }.write(account),
+            Some(trailer) => Observable { status, flags: 0, ..trailer }.write(account),
             None => Ok(()),
         }
     }
