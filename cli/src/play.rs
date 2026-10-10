@@ -10,7 +10,7 @@ use casino_ops::magicblock::{EPHEMERAL_VAULT, MAGIC_CONTEXT, MAGIC_PROGRAM, SLOT
 use casino_ops::vault::{self, SYSTEM_PROGRAM};
 use casino_ops::{sol, Chain, Endpoint, Instruction, Keypair, Player, Pubkey, Signer, Treasury};
 use slots::instructions::request_collect::payout;
-use slots::instructions::{hold::Hold, request_bet::RequestBet, resolve_bet::ResolveBet, resolve_collect::ResolveCollect};
+use slots::instructions::{hold::Hold, request_bet::RequestBet, resolve_bet::ResolveBet};
 use slots::state::config::{MachineConfig, MODE_GAMBLE, MODE_HOLD};
 use slots::state::spin::{self, Spin, SpinStatus};
 
@@ -126,17 +126,14 @@ impl Round<'_, '_> {
         Ok(found)
     }
 
+    /// Asks the house to pay the spin; its own task pays it a moment later, so this waits for the
+    /// spin to read collected.
     async fn collect(&self) -> Result<()> {
         let (user, session) = (self.user(), self.player.session.pubkey());
         let request = built(generated::Slots::request_collect_instruction(
-            user, house(), spin_of(&user), self.player.receipt(), EPHEMERAL_VAULT, MAGIC_PROGRAM, VAULT_PROGRAM, session,
-            Treasury::house::<Slots>().ledger, MAGIC_CONTEXT,
+            session, user, house(), spin_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM,
         ))?;
-        let resolve = built(generated::Slots::resolve_collect_instruction(
-            self.player.receipt(), vault::authority(), house(), spin_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM, analytics(),
-            ResolveCollect { human: user },
-        ))?;
-        self.player.play(&self.at, &[request, self.player.settle::<Slots>(resolve)]).await?;
+        self.player.play(&self.at, &[request]).await?;
         // Older programs close the spin instead.
         self.player
             .until("the spin collected", async || {

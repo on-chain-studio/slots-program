@@ -1,26 +1,28 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use casino_core::chain::*;
-use casino_core::{pda, receipt, vault, CoreError};
+use casino_core::{pda, CoreError};
 
 use crate::error::GameError;
+use crate::instructions::pay_collect;
 use crate::state::config::{MODE_GAMBLE, MODE_HOLD};
 use crate::state::spin::{Spin, SpinStatus};
 use crate::utils::engine;
 
-/// Prices the finished spin and asks the vault to pay it. The session key fires this
-/// automatically — on a hold machine it also works mid-sequence, since collecting grid N equals
+/// Asks the house to pay the finished spin: schedules its `PayCollect`, which pays it and marks
+/// it collected. On a hold machine it also works mid-sequence, since collecting grid N equals
 /// holding every reel and respinning, so stopping early forfeits nothing.
 ///
-/// Only successful settlement marks the result collected. Marking it here would let an
-/// abandoned payout request consume a win without paying it.
-/// Accounts: [user, house, spin, receipt, ephemeral_vault, magic_program, vault_program,
-///            wallet (signer), house_ledger, magic_context]
+/// Names no ledger, so anyone's transaction or program may send it — the casino floor's house
+/// among them. Who may ask is the only check: while a round decision is open, the player or the
+/// session key that consented to the bet; once nothing is left to decide, anyone. A spin already
+/// collected is left as it is.
+/// Accounts: [collector (signer), user, house, spin, magic_context, magic_program]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestCollect;
 
 /// What a finished spin pays, given everything the account holds. Pure, and shared with
-/// `resolve_collect`, so the number the receipt names, the number the vault moves and the number
-/// analytics records are all the same computation.
+/// `pay_collect` and the reveal callback, so the number the floor shows, the number the vault
+/// moves and the number analytics records are all the same computation.
 pub fn payout(spin: &Spin, terms: &crate::state::MachineConfig) -> Result<u64, ProgramError> {
     match terms.mode {
         MODE_GAMBLE if spin.round > 0 => {
@@ -55,79 +57,47 @@ pub fn deciding(spin: &Spin, terms: &crate::state::MachineConfig, amount: u64) -
 
 impl RequestCollect {
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
-    pub fn process<'a>(
+    pub fn process(
         &self,
+        collector: &AccountInfo,
         user: &AccountInfo,
         house: &AccountInfo,
         spin_account: &AccountInfo,
-        receipt_account: &AccountInfo,
-        ephemeral_vault: &AccountInfo,
-        magic_program: &AccountInfo,
-        vault_program: &AccountInfo,
-        wallet: &AccountInfo,
-        house_ledger: &AccountInfo,
         magic_context: &AccountInfo,
+        magic_program: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
-
-        // A win may open a new token slot on the player's ledger; the vault needs the owner's
-        // consent, which is the session key signing here.
-        if !wallet.is_signer() {
+        if !collector.is_signer() {
             return Err(ProgramError::MissingRequiredSignature);
         }
-
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
-        if *house_ledger.address() != vault::ledger(house.address()) {
-            return Err(CoreError::InvalidPDA.into());
-        }
-        if *receipt_account.address() != receipt::address(program_id, wallet.address()) {
-            return Err(CoreError::InvalidPDA.into());
-        }
 
         let terms = *Spin::terms(spin_account)?;
-        let amount = {
+        let (generation, round) = {
             let spin = Spin::load(spin_account)?;
             if spin.user != user.address().to_bytes() {
                 return Err(CoreError::Unauthorized.into());
             }
+            pda::validate(program_id, spin_account, &[b"spin", user.address().as_ref()])?;
+            if spin.status == SpinStatus::Collected as u64 {
+                return Ok(());
+            }
             if spin.status != SpinStatus::Rolled as u64 {
                 return Err(GameError::NotRolled.into());
             }
-            pda::validate(program_id, spin_account, &[b"spin", user.address().as_ref()])?;
-            let amount = payout(spin, &terms)?;
-            // While a round decision is still open only the consenter may collect. Otherwise a
+            // While a round decision is still open only the player may collect. Otherwise a
             // stranger could force-settle the current grid and rob the player of their remaining
-            // respins or ladder climbs. Once nothing is left to decide, collect stays
-            // permissionless so an abandoned finished spin can still be collected by anyone —
-            // the casino floor's house among them.
-            if deciding(spin, &terms, amount) && wallet.address().to_bytes() != spin.consenter {
+            // respins or ladder climbs.
+            let asker = collector.address().to_bytes();
+            if deciding(spin, &terms, payout(spin, &terms)?) && asker != spin.user && asker != spin.consenter {
                 return Err(CoreError::Unauthorized.into());
             }
-            amount
+            (Spin::generation(spin_account)?, spin.round)
         };
 
-        // A loss is an empty receipt: the settle moves nothing and still fires the callback,
-        // which marks the result collected.
-        let mut movements = Vec::new();
-        if amount > 0 {
-            movements.push(receipt::Movement {
-                mint: Pubkey::new_from_array(terms.mint),
-                amount,
-                from: 1,
-                to: 0,
-            });
-        }
-
-        receipt::create(
-            vault_program, house, house_ledger, wallet, receipt_account, ephemeral_vault,
-            magic_program, magic_context,
-            program_id,
-            &[b"house", &[house_bump]],
-            &[*user.address(), *house.address()],
-            crate::SlotsInstruction::RESOLVE_COLLECT,
-            &[],
-            &movements,
+        pay_collect::schedule(
+            house, &[b"house", &[house_bump]], magic_context, magic_program,
+            spin_account.address(), user.address(), generation, round,
         )
     }
 }

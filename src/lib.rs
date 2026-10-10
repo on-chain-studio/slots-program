@@ -32,6 +32,7 @@ pub mod instructions {
     pub mod gamble;
     pub mod request_collect;
     pub mod resolve_collect;
+    pub mod pay_collect;
     pub mod upgrade_permissions;
 }
 
@@ -374,28 +375,26 @@ impl Slots {
         Ok(gamble::Gamble.process(signer.info.as_view(), spin.info.as_view())?)
     }
 
+    /// Names no ledger: the player, their session key or — once nothing is left to decide — anyone,
+    /// the casino floor's house among them, asks; the house's own `PayCollect` task pays.
     #[instruction(discriminator = 22)]
     pub fn request_collect<'a>(
         &self,
+        collector: &Signer<'a>,
         user: &Account<'a>,
         house: &mut Account<'a>,
         spin: &mut Account<'a>,
-        receipt: &mut Account<'a>,
-        ephemeral_vault: &mut Account<'a>,
-        magic_program: &Account<'a>,
-        vault_program: &Account<'a>,
-        wallet: &Signer<'a>,
-        house_ledger: &mut Account<'a>,
         magic_context: &mut Account<'a>,
+        magic_program: &Account<'a>,
     ) -> Result<()> {
         Ok(request_collect::RequestCollect.process(
-            user.info.as_view(), house.info.as_view(), spin.info.as_view(), receipt.info.as_view(), ephemeral_vault.info.as_view(),
-            magic_program.info.as_view(), vault_program.info.as_view(), wallet.info.as_view(), house_ledger.info.as_view(),
-            magic_context.info.as_view(),
+            collector.info.as_view(), user.info.as_view(), house.info.as_view(), spin.info.as_view(),
+            magic_context.info.as_view(), magic_program.info.as_view(),
         )?)
     }
 
-    /// The vault's settle callback for a payout.
+    /// The vault's settle callback for a payout made by a receipt. Nothing makes one now; kept
+    /// for any still in flight.
     #[instruction(discriminator = 23)]
     pub fn resolve_collect<'a>(
         &self,
@@ -438,4 +437,23 @@ impl Slots {
             permission.info.as_view(), permission_program.info.as_view(), vault_program.info.as_view())?)
     }
 
+    /// The house paying a spin it was asked to collect. Only its own task fires it: the executor
+    /// signs for the house that scheduled it.
+    #[instruction(discriminator = 26)]
+    pub fn pay_collect<'a>(
+        &self,
+        executor: &Signer<'a>,
+        house: &mut Account<'a>,
+        house_ledger: &mut Account<'a>,
+        spin: &mut Account<'a>,
+        player_ledger: &mut Account<'a>,
+        vault_program: &Account<'a>,
+        analytics: &mut Account<'a>,
+        args: pay_collect::PayCollect,
+    ) -> Result<()> {
+        Ok(args.process(
+            executor.info.as_view(), house.info.as_view(), house_ledger.info.as_view(), spin.info.as_view(),
+            player_ledger.info.as_view(), vault_program.info.as_view(), analytics.info.as_view(),
+        )?)
+    }
 }

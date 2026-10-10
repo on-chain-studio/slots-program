@@ -3,7 +3,6 @@ use casino_core::chain::*;
 use casino_core::observe;
 use casino_core::{pda, vrf, CoreError};
 
-use crate::constants::ANALYTICS;
 use crate::instructions::request_collect::{deciding, payout};
 use crate::state::spin::{Spin, SpinStatus};
 
@@ -13,8 +12,8 @@ use crate::state::spin::{Spin, SpinStatus};
 ///
 /// The seed is also the floor's result, shown with what it pays. If a station watches this bet,
 /// `RequestReveal` named the house, the Magic context and the Magic program after the spin, and
-/// with them the house schedules the floor's publish, carrying what the floor needs to collect
-/// the spin itself once no decision is left open. A callback without them, requested before a
+/// with them the house schedules the floor's publish, carrying what the floor needs to ask for the
+/// spin's collect once no decision is left open. A callback without them, requested before a
 /// station sat down or before this program knew how, just lands the seed.
 /// Accounts: [vrf_identity (signer), spin, house?, magic_context?, magic_program?]
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -82,7 +81,7 @@ impl CallbackReveal {
         }
         observe::schedule_publish_collecting(
             program_id, house_account, &[b"house", &[house_bump]], magic_context, magic_program,
-            spin_account, &trailer.observer, &spin.user, &ANALYTICS,
+            spin_account, &trailer.observer, &spin.user,
         )
     }
 }

@@ -502,4 +502,24 @@ mod tests {
         assert!(ix.accounts[0].is_signer && !ix.accounts[0].is_writable);
         assert!(ix.accounts[3].is_writable && !ix.accounts[2].is_writable);
     }
+
+    /// A collect names no ledger: the session key asks, and the house's own task pays.
+    #[test]
+    fn a_collect_is_a_request_naming_no_ledger() {
+        let (session, user) = (Pubkey::new_from_array([4; 32]), Pubkey::new_from_array([5; 32]));
+        let ix = generated::Slots::request_collect_instruction(
+            session, user, house(), spin_of(&user), casino_ops::magicblock::MAGIC_CONTEXT, MAGIC_PROGRAM,
+        )
+        .unwrap();
+        assert_eq!(number(&ix), 22);
+        let keys: Vec<(Pubkey, bool, bool)> = ix.accounts.iter().map(|m| (m.pubkey, m.is_signer, m.is_writable)).collect();
+        assert_eq!(keys, [
+            (session, true, false),
+            (user, false, false),
+            (house(), false, true),
+            (spin_of(&user), false, true),
+            (casino_ops::magicblock::MAGIC_CONTEXT, false, true),
+            (MAGIC_PROGRAM, false, false),
+        ]);
+    }
 }

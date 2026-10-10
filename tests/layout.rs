@@ -285,6 +285,8 @@ fn the_wire_discriminators_never_move() {
     assert_eq!(ix::REQUEST_COLLECT, 22);
     assert_eq!(ix::RESOLVE_COLLECT, 23);
     assert_eq!(ix::UPGRADE_PERMISSIONS, 24);
+    assert_eq!(ix::ADD_CALLER, 25);
+    assert_eq!(ix::PAY_COLLECT, 26);
 }
 
 mod wire {

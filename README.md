@@ -16,9 +16,11 @@ analytics and nothing more.
 ## Money
 
 Same vault as scratch cards (`VAULTrDSU…`), which is the point: a ledger is `["ledger", owner]`
-keyed on the wallet, so a player funded there can spin here without funding again. Every payment
-is a vault receipt — request names the movements, settle moves them ledger-to-ledger and calls
-back into the game in the same instruction. A dropped settle pays nothing and creates nothing.
+keyed on the wallet, so a player funded there can spin here without funding again. A stake is
+a vault receipt — request names the movements, settle moves them ledger-to-ledger and calls back
+into the game in the same instruction. A dropped settle pays nothing and creates nothing. A payout
+is the house's own: `RequestCollect` schedules `PayCollect`, a task the house's executor signs,
+which settles house ledger → player ledger signed by the house (a credit needs no consent).
 
 **No jackpot.** The whole stake goes to the house and the whole return target lives in the
 machines: **90% RTP** (scratch runs 80% + a 10% pot; there is no pot here). The gamble ladder's
@@ -65,7 +67,7 @@ size is refused.
 RequestBet ─ settle ─▶ spin exists (Bought)
 RequestReveal ──▶ Requested ── VRF callback ──▶ Rolled        (permissionless, retryable)
    Hold(mask) / Gamble ──▶ Bought (next round)                (player/consenter-signed)
-RequestCollect ─ settle ─▶ paid, spin Collected               (a loss is an empty receipt)
+RequestCollect ──▶ PayCollect task ──▶ paid, spin Collected   (a loss moves nothing)
 ```
 
 The ordering *is* the security: `Hold` and `Gamble` are the only paths that advance the round,
@@ -98,7 +100,7 @@ CallbackReveal ──▶ RESULT       round, result = the seed, paid = what coll
                                 publish if watched
 Hold / Gamble ──▶ PENDING       same observer, stake (a decision takes none) and last result;
                                 no decision open
-ResolveCollect ──▶ SETTLED      paid = what the vault paid; no decision open
+PayCollect ──▶ SETTLED          paid = what the vault paid; no decision open
 ```
 
 `paid` at the reveal is `payout`, the same function the collect prices with, so on a hold or
@@ -110,12 +112,14 @@ vault settle; any account the floor program owns, with data, is taken as one, an
 it clears the observer, so watching never outlives the bet. While there is an observer,
 `RequestReveal` hands the VRF callback the house, the Magic context and the Magic program after the
 spin, and `CallbackReveal` has the house schedule one floor `Publish` (a one-shot task, under an id
-per spin). The publish carries `observe::collect_metas` after its own accounts, so the floor can
-collect the spin itself: `RequestCollect` with the floor's house as the wallet, then the vault's
-settle of that receipt. It does so only without `FLAG_DECIDING` — `deciding` is the same rule by
-which `RequestCollect` refuses anyone but the consenter. A callback without those accounts —
+per spin). The publish carries `observe::request_metas` after its own accounts (the user, this program, the
+house; the spin writable), so the floor can ask for the collect itself: `RequestCollect` with the
+floor's house as the collector, which names no ledger and schedules the house's `PayCollect`. It
+does so only without `FLAG_DECIDING` — `deciding` is the same rule by which `RequestCollect`
+refuses anyone but the player and the consenter. `PayCollect` pays only the generation and round
+it was asked for, so the task's later fires never pay a newer grid unasked. A callback without those accounts —
 requested before the station, or before this program knew to ask — lands the seed and publishes
-nothing. No instruction was added or renumbered.
+nothing. `PayCollect` is 26; `ResolveCollect` (23) stays only for a receipt still in flight.
 
 ## The engine
 
@@ -152,9 +156,10 @@ charge 150 CU a call):
 | `ResolveBet`, reusing it, at a station | 15,500 |
 | `CallbackReveal`, a spin without the trailer | 6,894 |
 | `CallbackReveal`, unwatched (pricing the grid) | 14,831 – 14,927 |
-| `CallbackReveal`, watched: scheduling the publish, with the floor's collect | 37,257 |
+| `CallbackReveal`, watched: scheduling the publish, with the floor's request | 26,013 |
 | `Hold` | 5,884 |
-| `RequestCollect`, the floor's house collecting | 28,435 |
+| `RequestCollect`, the floor's house asking: scheduling `PayCollect` | 28,223 |
+| `PayCollect`, a win | 28,278 |
 
 ## Operating it
 

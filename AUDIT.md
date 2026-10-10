@@ -132,6 +132,46 @@ stake and what it paid. A spin is 1016 bytes.
 
 ---
 
+## Pending re-audit (2026-10-11)
+
+The collect path changed; everything this file says about `request_collect`/`resolve_collect` and
+the receipt behind a payout predates it.
+
+**Why.** A task the casino floor schedules may not name a game's house ledger (the ledger's
+permission lists only the vault and the game), so the floor's receipt-based collect never fired;
+and a player's own transaction may not name a ledger the floor writes. Roulette and blackjack never
+hit this because each schedules its own payout. Owner-approved: slots does the same.
+
+**What changed.**
+- `RequestCollect` (22) names no ledger and makes no receipt. Accounts are now
+  `[collector (s), user, house (w), spin (w), magic_context (w), magic_program]`, data unchanged.
+  Checks: collector signed; house PDA; `spin.user == user` and the spin PDA; `Collected` → `Ok`
+  no-op (was `NotRolled`); not `Rolled` → `NotRolled`; while `deciding` only `spin.user` or
+  `spin.consenter` (the player's own wallet is now accepted too; there is no floor exception).
+  It then schedules `PayCollect` (task id `task::id([program, "collect", spin])`, 1000 ms × 15),
+  paid for and signed by the house PDA.
+- `PayCollect` (26, new), args `{ generation, round }`:
+  `[executor (s), house (w), house_ledger (w), spin (w), player_ledger (w), vault_program, analytics (w)]`.
+  The executor must be `observe::executor(house)` — only the house's own task signs as it. Pays
+  only the spin still `Rolled` at the generation and round the request saw; anything else is an
+  `Ok` no-op. Pays `payout()` by `vault::settle` house ledger → `vault::ledger(spin.user)`, signed
+  by the house PDA (a credit needs no consent), records analytics as `ResolveCollect` did, marks
+  the spin `Collected` and the trailer `SETTLED` with `paid`.
+- The generation/round binding is new and load-bearing: unlike a receipt (atomic, see
+  "Stale-receipt binding" above, which no longer covers the payout), the task outlives the request
+  and fires up to 15 times. Without it a later fire could pay the player's next bet, or a grid
+  reached by a hold/gamble taken after asking, with no request — i.e. collect over an open
+  decision.
+- `ResolveCollect` (23) is unchanged and kept only for a receipt still in flight; nothing creates
+  one now.
+- `CallbackReveal`'s collecting publish now carries casino-core's `observe::request_metas`
+  (`[user, game, house (w)]`, spin writable) instead of the 11 `collect_metas`.
+
+**To check.** That a stranger repeating `RequestCollect` on a finished spin costs the house only
+task fees and cannot pay twice; that `PayCollect` cannot be fired except by the task; that the
+settle cannot credit a ledger other than the spin's player's; the CU of the floor's inline CPI
+(floor → RequestCollect → Magic program).
+
 ## Invariants (each with the line that holds it)
 
 | Claim | Where |

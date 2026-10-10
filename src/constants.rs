@@ -16,9 +16,14 @@ pub const ANALYTICS_READERS: [Pubkey; 2] = [DEV_KEY, OPS_KEY];
 /// The casino floor program. It is top-level over spins, so it must be a member of their permission.
 pub const PRIVATE_CASINO: Pubkey = Pubkey::from_str_const("EzQPZpLj8DccG7M7VCyr9kEm4wFLZi6pDGfxrAsLNz6z");
 
-/// `["analytics"]`, pinned so the reveal callback, which hands it to the floor's collect, need not
+/// `["analytics"]`, pinned so the payout task's instruction, built in `RequestCollect`, need not
 /// derive it.
 pub const ANALYTICS: Pubkey = Pubkey::from_str_const("68XX3KGW2DjKgXPt9kUzq8pvUAdMze4BZzs3QhrVL6aa");
+
+/// How often the house's payout task fires, and how many times: once at once, then again for a
+/// ledger that is briefly away. Every fire after the one that pays does nothing.
+pub const PAY_MS: u64 = 1_000;
+pub const PAY_ATTEMPTS: u64 = 15;
 
 /// Just the house. There is no progressive jackpot here: with no pot to feed, the whole return
 /// target lives in the machines themselves — 90% RTP, where scratch cards run 80% + 10% pot.

@@ -9,6 +9,8 @@ use crate::state::analytics::Analytics;
 use crate::state::spin::{Spin, SpinStatus};
 
 /// The settle callback marks the retained result as paid, and shows the floor what it paid.
+/// Retired for collecting: `RequestCollect` no longer makes a receipt, so this answers only a
+/// receipt made before that and still in flight. `PayCollect` pays now.
 /// Accounts: [receipt, vault_authority (signer), house, spin, ephemeral_vault, magic_program,
 ///            analytics]
 #[derive(BorshDeserialize, BorshSerialize)]
