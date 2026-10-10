@@ -1070,7 +1070,9 @@ fn core_key(k: Pubkey) -> casino_core::chain::Pubkey {
 /// publish's own seven accounts, then the collect's eleven. Key, signer, writable.
 fn the_floor_holds(table: &Table, station: Pubkey) -> Vec<(Pubkey, bool, bool)> {
     let house = core_key(pda(&[b"house"]));
-    let publish = observe::publish_instruction(&house, &core_key(station), &table.user.to_bytes(), &core_key(table.spin));
+    let mut publish = observe::publish_instruction(&house, &core_key(station), &table.user.to_bytes(), &core_key(table.spin));
+    // The collect's callback writes the spin, so a collecting publish names it writable.
+    publish.accounts[3].is_writable = true;
     let collect = observe::collect_metas(&slots::ID, &house, &core_key(table.user), &slots::constants::ANALYTICS);
     publish.accounts.iter().chain(collect.iter()).map(|m| (fixed(m.pubkey), m.is_signer, m.is_writable)).collect()
 }
