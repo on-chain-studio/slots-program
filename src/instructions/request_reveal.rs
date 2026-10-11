@@ -4,9 +4,9 @@ use casino_core::{observe, pda, vrf, CoreError};
 
 use crate::state::spin::{Spin, SpinStatus};
 
-/// Asks the VRF for this round's seed. Permissionless and retryable (from `Bought` *or*
-/// `Requested`), so a dropped oracle callback cannot strand a paid bet — anyone may re-fire it,
-/// and the house pays either way.
+/// Asks the VRF for this round's seed. Permissionless, and asked once: only a `Bought` spin may
+/// ask, and a second ask finds it `Requested` and is refused. An answer that never comes leaves the
+/// spin waiting, in the open.
 ///
 /// When a casino floor station watches this bet, the callback is also handed the house, the
 /// Magic context and the Magic program, which is what it needs to schedule the floor's publish.
@@ -40,9 +40,7 @@ impl RequestReveal {
             if spin.user != user.address().to_bytes() {
                 return Err(CoreError::Unauthorized.into());
             }
-            if spin.status != SpinStatus::Bought as u64
-                && spin.status != SpinStatus::Requested as u64
-            {
+            if spin.status != SpinStatus::Bought as u64 {
                 return Err(CoreError::WrongStatus.into());
             }
             spin.status = SpinStatus::Requested as u64;

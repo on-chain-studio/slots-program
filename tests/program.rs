@@ -847,6 +847,29 @@ fn the_callback_is_handed_the_publish_accounts_only_while_a_station_watches() {
     }
 }
 
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_round_s_seed_is_asked_for_once() {
+    let table = Table::new();
+    let ask = |spin: Account| {
+        let (ix, mut accounts) = request_reveal(&table);
+        accounts.push((table.spin, spin));
+        with_stand_ins().process_instruction(&ix, &accounts)
+    };
+    let first = ask(table.spin_at(Spin::PERSISTENT_SIZE, SpinStatus::Bought, 0, 5, None));
+    assert_eq!(first.raw_result, Ok(()));
+    assert_eq!(calls_to(vrf_program()).len(), 1);
+    let asked = first.resulting_accounts.iter().find(|(k, _)| *k == table.spin).unwrap().1.clone();
+
+    let again = ask(asked);
+    assert_eq!(again.raw_result, core(casino_core::CoreError::WrongStatus), "a second ask is refused");
+    assert!(calls_to(vrf_program()).is_empty());
+    for status in [SpinStatus::Requested, SpinStatus::Rolled, SpinStatus::Collected] {
+        let result = ask(table.spin_at(Spin::PERSISTENT_SIZE, status, 0, 5, None));
+        assert_eq!(result.raw_result, core(casino_core::CoreError::WrongStatus));
+    }
+}
+
 /// The oracle's answer for round `round` of bet 5, with `rest` after the spin.
 fn callback(table: &Table, round: u64, rest: &[AccountMeta]) -> Instruction {
     callback_with(table, [9; 32], round, rest)

@@ -65,7 +65,7 @@ size is refused.
 
 ```
 RequestBet ─ settle ─▶ spin exists (Bought)
-RequestReveal ──▶ Requested ── VRF callback ──▶ Rolled        (permissionless, retryable)
+RequestReveal ──▶ Requested ── VRF callback ──▶ Rolled        (permissionless, asked once)
    Hold(mask) / Gamble ──▶ Bought (next round)                (player/consenter-signed)
 RequestCollect ──▶ PayCollect task ──▶ paid, spin Collected   (a loss moves nothing)
 ```
@@ -73,7 +73,7 @@ RequestCollect ──▶ PayCollect task ──▶ paid, spin Collected   (a los
 The ordering *is* the security: `Hold` and `Gamble` are the only paths that advance the round,
 and `RequestReveal` the only path to a new seed, so no sequence of instructions can produce
 round N+1's randomness while round N's decision is open. Each VRF request carries its round in
-the callback args and the callback refuses a mismatch — a re-fired request's late duplicate can
+the callback args and the callback refuses a mismatch — a late answer to an earlier request can
 never land a seen seed as a later round's randomness. (Verified live: the oracle echoes the args
 after the randomness.)
 

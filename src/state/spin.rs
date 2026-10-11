@@ -12,7 +12,7 @@ pub const VERSION:       u64 = 1;
 pub enum SpinStatus {
     /// Paid, and waiting for this round's randomness to be asked for.
     Bought    = 0,
-    /// The VRF has been asked. A dropped callback is re-fired from here.
+    /// The VRF has been asked, once. A dropped callback leaves the spin here.
     Requested = 1,
     /// The seed has landed and has not been applied yet. What the client renders from.
     Rolled    = 2,

@@ -148,7 +148,7 @@ hit this because each schedules its own payout. Owner-approved: slots does the s
   Checks: collector signed; house PDA; `spin.user == user` and the spin PDA; `Collected` → `Ok`
   no-op (was `NotRolled`); not `Rolled` → `NotRolled`; while `deciding` only `spin.user` or
   `spin.consenter` (the player's own wallet is now accepted too; there is no floor exception).
-  It then schedules `PayCollect` (task id `task::id([program, "collect", spin])`, 1000 ms × 15),
+  It then schedules `PayCollect` (task id `task::id([program, "collect", spin])`, fired once, at once),
   paid for and signed by the house PDA.
 - `PayCollect` (26, new), args `{ generation, round }`:
   `[executor (s), house (w), house_ledger (w), spin (w), player_ledger (w), vault_program, analytics (w)]`.
@@ -171,6 +171,12 @@ hit this because each schedules its own payout. Owner-approved: slots does the s
 task fees and cannot pay twice; that `PayCollect` cannot be fired except by the task; that the
 settle cannot credit a ledger other than the spin's player's; the CU of the floor's inline CPI
 (floor → RequestCollect → Magic program).
+
+**Asked once (owner decision, 2026-10-11).** Every action happens once; a failure stays visible
+in its state and is never retried. `RequestReveal` asks only from `Bought`; a second ask finds the
+spin `Requested` and is refused (`WrongStatus`), so nobody can spend the house's lamports
+re-asking. An answer that never comes leaves the spin `Requested` — a parked problem, not
+re-asked. `slots-ops` waits on a leftover `Requested` spin instead of asking again.
 
 ## Invariants (each with the line that holds it)
 

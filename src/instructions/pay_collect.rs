@@ -15,9 +15,9 @@ use crate::state::spin::{Spin, SpinStatus};
 /// client or floor transaction could.
 ///
 /// Pays only the grid that was asked for: the spin's generation and round as `RequestCollect` saw
-/// them. The task fires several times, so a later fire must not find a newer grid — the player's
-/// next bet, or a decision taken after asking — and pay it unasked. Anything but that grid still
-/// rolled is left as it is.
+/// them. The task fires once, after the request, so its fire must not find a newer grid — the
+/// player's next bet, or a decision taken after asking — and pay it unasked. Anything but that grid
+/// still rolled is left as it is, and a payout that cannot be made stays uncollected.
 /// Accounts: [executor (signer), house, house_ledger, spin, player_ledger, vault_program, analytics]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct PayCollect {

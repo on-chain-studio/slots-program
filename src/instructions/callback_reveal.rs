@@ -20,7 +20,7 @@ use crate::state::spin::{Spin, SpinStatus};
 pub struct CallbackReveal {
     pub randomness: [u8; 32],
     /// The round this seed was requested for, echoed from the request's callback args. A seed
-    /// may only land in its own round: without this, a re-fired request's late duplicate could
+    /// may only land in its own round: without this, a late answer to an earlier round's request could
     /// arrive after the player has seen round N and committed round N+1 — and if the oracle
     /// re-derives the same bytes, land a *known* value as the next round's randomness.
     pub round: u64,

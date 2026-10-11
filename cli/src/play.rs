@@ -74,8 +74,9 @@ impl Round<'_, '_> {
         Ok(())
     }
 
-    /// Asks the oracle for this round's seed and waits for it to land. Permissionless and
-    /// retryable, and its own transaction, so a VRF request that fails unwinds nothing paid for.
+    /// Asks the oracle for this round's seed and waits for it to land. Its own transaction, so a
+    /// VRF request that fails unwinds nothing paid for. Asked once: a spin already asked for is
+    /// only waited on.
     async fn reveal(&self, label: &str) -> Result<Spin> {
         let request = built(generated::Slots::request_reveal_instruction(
             self.user(), house(), spin_of(&self.user()), identity(), VRF_EPHEMERAL_QUEUE, SLOT_HASHES, SYSTEM_PROGRAM,
@@ -100,8 +101,12 @@ impl Round<'_, '_> {
                 break;
             }
             found = true;
-            if spin.status != ROLLED {
+            if spin.status == BOUGHT {
                 self.reveal("the leftover spin").await?;
+                continue;
+            }
+            if spin.status != ROLLED {
+                self.wait(ROLLED, "the leftover spin's seed").await?;
                 continue;
             }
             let amount = payout(&spin, &terms).map_err(|e| anyhow::anyhow!("pricing the leftover spin: {e:?}"))?;
