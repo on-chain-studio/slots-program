@@ -31,6 +31,7 @@ pub mod instructions {
     pub mod hold;
     pub mod gamble;
     pub mod request_collect;
+    pub mod schedule_collect;
     pub mod resolve_collect;
     pub mod pay_collect;
     pub mod upgrade_permissions;
@@ -375,26 +376,30 @@ impl Slots {
         Ok(gamble::Gamble.process(signer.info.as_view(), spin.info.as_view())?)
     }
 
-    /// Names no ledger: the player, their session key or — once nothing is left to decide — anyone,
-    /// the casino floor's house among them, asks; the house's own `PayCollect` task pays.
+    /// The receipt-based collect every released client sends: the signer consents to a receipt
+    /// that names the house ledger. Kept until no client sends it; the floor asks by 27.
     #[instruction(discriminator = 22)]
     pub fn request_collect<'a>(
         &self,
-        collector: &Signer<'a>,
         user: &Account<'a>,
         house: &mut Account<'a>,
         spin: &mut Account<'a>,
-        magic_context: &mut Account<'a>,
+        receipt: &mut Account<'a>,
+        ephemeral_vault: &mut Account<'a>,
         magic_program: &Account<'a>,
+        vault_program: &Account<'a>,
+        wallet: &Signer<'a>,
+        house_ledger: &mut Account<'a>,
+        magic_context: &mut Account<'a>,
     ) -> Result<()> {
         Ok(request_collect::RequestCollect.process(
-            collector.info.as_view(), user.info.as_view(), house.info.as_view(), spin.info.as_view(),
-            magic_context.info.as_view(), magic_program.info.as_view(),
+            user.info.as_view(), house.info.as_view(), spin.info.as_view(), receipt.info.as_view(), ephemeral_vault.info.as_view(),
+            magic_program.info.as_view(), vault_program.info.as_view(), wallet.info.as_view(), house_ledger.info.as_view(),
+            magic_context.info.as_view(),
         )?)
     }
 
-    /// The vault's settle callback for a payout made by a receipt. Nothing makes one now; kept
-    /// for any still in flight.
+    /// The vault's settle callback for a payout made by a receipt (22).
     #[instruction(discriminator = 23)]
     pub fn resolve_collect<'a>(
         &self,
@@ -454,6 +459,24 @@ impl Slots {
         Ok(args.process(
             executor.info.as_view(), house.info.as_view(), house_ledger.info.as_view(), spin.info.as_view(),
             player_ledger.info.as_view(), vault_program.info.as_view(), analytics.info.as_view(),
+        )?)
+    }
+
+    /// Names no ledger: the player, their session key or — once nothing is left to decide — anyone,
+    /// the casino floor's house among them, asks; the house's own `PayCollect` task pays.
+    #[instruction(discriminator = 27)]
+    pub fn schedule_collect<'a>(
+        &self,
+        collector: &Signer<'a>,
+        user: &Account<'a>,
+        house: &mut Account<'a>,
+        spin: &mut Account<'a>,
+        magic_context: &mut Account<'a>,
+        magic_program: &Account<'a>,
+    ) -> Result<()> {
+        Ok(schedule_collect::ScheduleCollect.process(
+            collector.info.as_view(), user.info.as_view(), house.info.as_view(), spin.info.as_view(),
+            magic_context.info.as_view(), magic_program.info.as_view(),
         )?)
     }
 }

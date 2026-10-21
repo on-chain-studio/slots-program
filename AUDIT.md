@@ -143,8 +143,9 @@ and a player's own transaction may not name a ledger the floor writes. Roulette 
 hit this because each schedules its own payout. Owner-approved: slots does the same.
 
 **What changed.**
-- `RequestCollect` (22) names no ledger and makes no receipt. Accounts are now
-  `[collector (s), user, house (w), spin (w), magic_context (w), magic_program]`, data unchanged.
+- `ScheduleCollect` (27, new; owner decision 2026-10-22 — it was first put in 22's place) names no
+  ledger and makes no receipt. Accounts
+  `[collector (s), user, house (w), spin (w), magic_context (w), magic_program]`, no data.
   Checks: collector signed; house PDA; `spin.user == user` and the spin PDA; `Collected` → `Ok`
   no-op (was `NotRolled`); not `Rolled` → `NotRolled`; while `deciding` only `spin.user` or
   `spin.consenter` (the player's own wallet is now accepted too; there is no floor exception).
@@ -162,8 +163,10 @@ hit this because each schedules its own payout. Owner-approved: slots does the s
   once, at once. Without it the fire could pay the player's next bet, or a grid
   reached by a hold/gamble taken after asking, with no request — i.e. collect over an open
   decision.
-- `ResolveCollect` (23) is unchanged and kept only for a receipt still in flight; nothing creates
-  one now.
+- `RequestCollect` (22) is unchanged from what this file describes above and what mainnet runs: the
+  receipt-based collect every released client sends. It stays beside 27 until no client sends it,
+  so the mainnet upgrade and the app releases need not coincide. `ResolveCollect` (23) is its
+  callback, unchanged. The casino floor sends 27 to slots (and still 22 to bingo).
 - `CallbackReveal`'s collecting publish now carries casino-core's `observe::request_metas`
   (`[user, game, house (w)]`, spin writable) instead of the 11 `collect_metas`.
 

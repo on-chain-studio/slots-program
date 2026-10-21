@@ -10,7 +10,7 @@ use casino_ops::magicblock::{EPHEMERAL_VAULT, MAGIC_CONTEXT, MAGIC_PROGRAM, SLOT
 use casino_ops::vault::{self, SYSTEM_PROGRAM};
 use casino_ops::{sol, Chain, Endpoint, Instruction, Keypair, Player, Pubkey, Signer, Treasury};
 use slots::instructions::request_collect::payout;
-use slots::instructions::{hold::Hold, request_bet::RequestBet, resolve_bet::ResolveBet};
+use slots::instructions::{hold::Hold, request_bet::RequestBet, resolve_bet::ResolveBet, resolve_collect::ResolveCollect};
 use slots::state::config::{MachineConfig, MODE_GAMBLE, MODE_HOLD};
 use slots::state::spin::{self, Spin, SpinStatus};
 
@@ -29,6 +29,9 @@ fn built(result: solarium_client::result::Result<Instruction>) -> Result<Instruc
 struct Round<'p, 'c> {
     player: &'p Player<'c>,
     at: Endpoint,
+    /// Collect by `ScheduleCollect` (27), as the casino floor asks, rather than by the receipt of
+    /// `RequestCollect` (22) that every released client sends.
+    scheduled: bool,
 }
 
 impl Round<'_, '_> {
@@ -131,14 +134,27 @@ impl Round<'_, '_> {
         Ok(found)
     }
 
-    /// Asks the house to pay the spin; its own task pays it a moment later, so this waits for the
-    /// spin to read collected.
+    /// Collects the spin the way the released clients do — a receipt the session key consents to,
+    /// settled by the vault in the same transaction — or, `--scheduled`, by asking the house, whose
+    /// own task pays it a moment later. Either way this waits for the spin to read collected.
     async fn collect(&self) -> Result<()> {
         let (user, session) = (self.user(), self.player.session.pubkey());
-        let request = built(generated::Slots::request_collect_instruction(
-            session, user, house(), spin_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM,
-        ))?;
-        self.player.play(&self.at, &[request]).await?;
+        if self.scheduled {
+            let ask = built(generated::Slots::schedule_collect_instruction(
+                session, user, house(), spin_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM,
+            ))?;
+            self.player.play(&self.at, &[ask]).await?;
+        } else {
+            let request = built(generated::Slots::request_collect_instruction(
+                user, house(), spin_of(&user), self.player.receipt(), EPHEMERAL_VAULT, MAGIC_PROGRAM, VAULT_PROGRAM, session,
+                Treasury::house::<Slots>().ledger, MAGIC_CONTEXT,
+            ))?;
+            let resolve = built(generated::Slots::resolve_collect_instruction(
+                self.player.receipt(), vault::authority(), house(), spin_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM, analytics(),
+                ResolveCollect { human: user },
+            ))?;
+            self.player.play(&self.at, &[request, self.player.settle::<Slots>(resolve)]).await?;
+        }
         // Older programs close the spin instead.
         self.player
             .until("the spin collected", async || {
@@ -148,7 +164,7 @@ impl Round<'_, '_> {
     }
 }
 
-pub async fn play(chain: &Chain, wallet: &Keypair, machine: u64, close: bool) -> Result<()> {
+pub async fn play(chain: &Chain, wallet: &Keypair, machine: u64, close: bool, scheduled: bool) -> Result<()> {
     let Some(terms) = crate::machines_on_chain(chain).await?.into_iter().nth(machine as usize) else {
         bail!("machine {machine} is not on the shelf");
     };
@@ -161,7 +177,7 @@ pub async fn play(chain: &Chain, wallet: &Keypair, machine: u64, close: bool) ->
     // Enough for a spin, its retries and a gamble; a deposit tops up only the shortfall.
     let live = player.ready(terms.stake_lamports * 4, |m| println!("  ✅ {m}")).await?;
     println!("  ✅ live on the rollup with {live} lamports");
-    let round = Round { player: &player, at: player.rollup().await? };
+    let round = Round { player: &player, at: player.rollup().await?, scheduled };
     let before = player.ledger_at(&round.at).await?.map(|l| l.sol).unwrap_or(0);
 
     println!("2. bet");

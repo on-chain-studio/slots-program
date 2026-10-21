@@ -113,13 +113,20 @@ it clears the observer, so watching never outlives the bet. While there is an ob
 `RequestReveal` hands the VRF callback the house, the Magic context and the Magic program after the
 spin, and `CallbackReveal` has the house schedule one floor `Publish` (a one-shot task, under an id
 per spin). The publish carries `observe::request_metas` after its own accounts (the user, this program, the
-house; the spin writable), so the floor can ask for the collect itself: `RequestCollect` with the
-floor's house as the collector, which names no ledger and schedules the house's `PayCollect`. It
-does so only without `FLAG_DECIDING` — `deciding` is the same rule by which `RequestCollect`
-refuses anyone but the player and the consenter. `PayCollect` pays only the generation and round
+house; the spin writable), so the floor can ask for the collect itself: `ScheduleCollect` (27) with
+the floor's house as the collector, which names no ledger and schedules the house's `PayCollect`. It
+does so only without `FLAG_DECIDING` — `deciding` is the same rule by which both collects
+refuse anyone but the player and the consenter. `PayCollect` pays only the generation and round
 it was asked for, so the task's later fires never pay a newer grid unasked. A callback without those accounts —
 requested before the station, or before this program knew to ask — lands the seed and publishes
-nothing. `PayCollect` is 26; `ResolveCollect` (23) stays only for a receipt still in flight.
+nothing. `PayCollect` is 26.
+
+Two collects exist side by side. `RequestCollect` (22) is the one every released client sends: the
+session key consents to a vault receipt that names the house ledger, the vault settles it in the
+same transaction and calls back `ResolveCollect` (23). `ScheduleCollect` (27) names no ledger and
+has the house pay from a task of its own; it is what the floor sends, and what clients move to.
+Both price the spin by the same `payout` and guard an open decision by the same `deciding`. 22 stays
+until no client sends it, so a program upgrade never has to land on the same day as an app release.
 
 ## The engine
 
@@ -158,7 +165,8 @@ charge 150 CU a call):
 | `CallbackReveal`, unwatched (pricing the grid) | 14,831 – 14,927 |
 | `CallbackReveal`, watched: scheduling the publish, with the floor's request | 26,013 |
 | `Hold` | 5,884 |
-| `RequestCollect`, the floor's house asking: scheduling `PayCollect` | 28,223 |
+| `RequestCollect`, the session key's receipt | see `cargo test` |
+| `ScheduleCollect`, the floor's house asking: scheduling `PayCollect` | 28,223 |
 | `PayCollect`, a win | 28,278 |
 
 ## Operating it

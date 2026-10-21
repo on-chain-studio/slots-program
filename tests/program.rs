@@ -1058,10 +1058,11 @@ fn a_collected_spin_is_settled_for_the_floor() {
 
 // ── the collect ────────────────────────────────────────────────────────────────────────────
 //
-// RequestCollect names no ledger: whoever may ask — the player, their session key, or anyone once
-// nothing is left to decide, the casino floor's house among them — and it schedules the house's own
-// PayCollect, which the house's executor signs and which pays. A watched spin's publish carries
-// what the floor needs to send the request, and nothing else.
+// ScheduleCollect (27) names no ledger: whoever may ask — the player, their session key, or anyone
+// once nothing is left to decide, the casino floor's house among them — and it schedules the house's
+// own PayCollect, which the house's executor signs and which pays. A watched spin's publish carries
+// what the floor needs to send the request, and nothing else. RequestCollect (22) stays beside it
+// as every released client sends it: the signer consents to a receipt the vault settles.
 
 /// The spin, bet on `mode`'s machine.
 fn in_mode(mut account: Account, mode: u8) -> Account {
@@ -1162,10 +1163,10 @@ fn the_floor_is_told_a_decision_is_open_exactly_while_one_is() {
     }
 }
 
-/// RequestCollect with `collector` signing: [collector (s), user, house (w), spin (w),
+/// ScheduleCollect with `collector` signing: [collector (s), user, house (w), spin (w),
 /// magic_context (w), magic_program].
-fn request_collect(table: &Table, collector: Pubkey) -> Instruction {
-    Instruction::new_with_bytes(program(), &22u64.to_le_bytes(), vec![
+fn schedule_collect(table: &Table, collector: Pubkey) -> Instruction {
+    Instruction::new_with_bytes(program(), &27u64.to_le_bytes(), vec![
         AccountMeta::new_readonly(collector, true),
         AccountMeta::new_readonly(table.user, false),
         AccountMeta::new(pda(&[b"house"]), false),
@@ -1175,11 +1176,11 @@ fn request_collect(table: &Table, collector: Pubkey) -> Instruction {
     ])
 }
 
-/// RequestCollect as the floor sends it: every account from what its publish holds, as writable as
-/// it is there, and the floor's house signing.
+/// ScheduleCollect as the floor sends it: every account from what its publish holds, as writable
+/// as it is there, and the floor's house signing.
 fn floor_collect(table: &Table, station: Pubkey) -> Instruction {
     let holds = the_floor_holds(table, station);
-    let mut ix = request_collect(table, fixed(casino_core::ids::FLOOR_HOUSE));
+    let mut ix = schedule_collect(table, fixed(casino_core::ids::FLOOR_HOUSE));
     for meta in ix.accounts.iter_mut().skip(1) {
         let &(_, _, is_writable) = holds.iter().find(|(held, ..)| *held == meta.pubkey).expect("the publish names it");
         assert_eq!(meta.is_writable, is_writable, "{}", meta.pubkey);
@@ -1199,7 +1200,7 @@ fn collect_accounts(ix: &Instruction, spin: Account) -> Vec<(Pubkey, Account)> {
     ]
 }
 
-/// The PayCollect `RequestCollect` schedules for `table`'s spin at `generation` and `round`.
+/// The PayCollect `ScheduleCollect` schedules for `table`'s spin at `generation` and `round`.
 fn pay_collect(table: &Table, generation: u64, round: u64) -> Instruction {
     let ix = slots::instructions::pay_collect::instruction(&core_key(pda(&[b"house"])), &core_key(table.spin), &core_key(table.user), generation, round);
     Instruction::new_with_bytes(
@@ -1220,6 +1221,96 @@ fn pay_accounts(ix: &Instruction, spin: Account) -> Vec<(Pubkey, Account)> {
         (k(5), builtin(vault(), "fake_vault")),
         (k(6), books()),
     ]
+}
+
+/// RequestCollect (22) with `wallet` consenting to the receipt: [user, house (w), spin (w),
+/// receipt (w), ephemeral_vault (w), magic_program, vault_program, wallet (s), house_ledger (w),
+/// magic_context (w)] — what every released client sends.
+fn receipt_collect(table: &Table, wallet: Pubkey) -> Instruction {
+    let house = core_key(pda(&[b"house"]));
+    Instruction::new_with_bytes(program(), &22u64.to_le_bytes(), vec![
+        AccountMeta::new_readonly(table.user, false),
+        AccountMeta::new(pda(&[b"house"]), false),
+        AccountMeta::new(table.spin, false),
+        AccountMeta::new(fixed(casino_core::receipt::address(&slots::ID, &core_key(wallet))), false),
+        AccountMeta::new(fixed(casino_core::ids::EPHEMERAL_VAULT_ID), false),
+        AccountMeta::new_readonly(magic(), false),
+        AccountMeta::new_readonly(vault(), false),
+        AccountMeta::new_readonly(wallet, true),
+        AccountMeta::new(fixed(casino_core::vault::ledger(&house)), false),
+        AccountMeta::new(fixed(casino_core::ids::MAGIC_CONTEXT_ID), false),
+    ])
+}
+
+fn receipt_accounts(ix: &Instruction, spin: Account) -> Vec<(Pubkey, Account)> {
+    let k = |i: usize| ix.accounts[i].pubkey;
+    vec![
+        (k(0), wallet()),
+        (k(1), owned(vec![])),
+        (k(2), spin),
+        (k(3), wallet()),
+        (k(4), wallet()),
+        (k(5), builtin(magic(), "fake_magic")),
+        (k(6), builtin(vault(), "fake_vault")),
+        (k(7), wallet()),
+        (k(8), wallet()),
+        (k(9), wallet()),
+    ]
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_session_key_collects_by_receipt_as_released_clients_do() {
+    let table = Table::fixed();
+    let ix = receipt_collect(&table, table.consenter);
+    let spin = finished(&table, Pubkey::new_unique());
+    let paid = pays_on(&spin);
+    let result = with_stand_ins().process_instruction(&ix, &receipt_accounts(&ix, spin));
+    assert_eq!(result.raw_result, Ok(()));
+    println!("request_collect, the session key's receipt: {} CU (stand-in included)", result.compute_units_consumed);
+
+    // The receipt: the session key consents, the house pays the player what the spin pays, and
+    // the vault calls back ResolveCollect.
+    let created = VAULT_ACCOUNTS.with(|v| v.borrow().clone());
+    assert_eq!(created, vec![vec![
+        (pda(&[b"house"]), true, true),
+        (ix.accounts[8].pubkey, false, true),
+        (table.consenter, true, false),
+        (ix.accounts[3].pubkey, false, true),
+        (ix.accounts[4].pubkey, false, true),
+        (magic(), false, false),
+        (ix.accounts[9].pubkey, false, true),
+    ]]);
+    let receipt = &calls_to(vault())[0];
+    let contains = |needle: &[u8]| receipt.windows(needle.len()).any(|w| w == needle);
+    let movement = [&[0; 32][..], &paid.to_le_bytes(), &[1, 0]].concat();
+    assert!(contains(&movement), "house to player, what the spin pays");
+    assert!(contains(&[table.user.as_ref(), pda(&[b"house"]).as_ref()].concat()), "the player's ledger, then the house's");
+    assert!(contains(&23u64.to_le_bytes()), "called back as ResolveCollect");
+    assert!(magic_calls().is_empty(), "no task: the receipt pays");
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn by_receipt_too_only_the_consenter_may_collect_while_deciding() {
+    let table = Table::new();
+    let ix = receipt_collect(&table, Pubkey::new_unique());
+    let result = with_stand_ins().process_instruction(&ix, &receipt_accounts(&ix, deciding(&table)));
+    assert_eq!(result.raw_result, core(casino_core::CoreError::Unauthorized));
+    assert!(calls_to(vault()).is_empty(), "no receipt");
+
+    let own = receipt_collect(&table, table.consenter);
+    let result = with_stand_ins().process_instruction(&own, &receipt_accounts(&own, deciding(&table)));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(calls_to(vault()).len(), 1);
+}
+
+#[test]
+fn the_two_collects_are_the_numbers_the_clients_and_the_floor_send() {
+    let table = Table::new();
+    assert_eq!(receipt_collect(&table, table.consenter).data, 22u64.to_le_bytes());
+    assert_eq!(schedule_collect(&table, table.consenter).data, 27u64.to_le_bytes());
+    assert_eq!(receipt_collect(&table, table.consenter).accounts.len(), 10);
 }
 
 /// A finished line spin of bet 5 that pays, watched by `station`.
@@ -1281,7 +1372,7 @@ fn a_collect_request_names_no_ledger() {
     let table = Table::new();
     let house = core_key(pda(&[b"house"]));
     let ledgers = [casino_core::vault::ledger(&house), casino_core::vault::ledger(&core_key(table.user))].map(fixed);
-    for ix in [request_collect(&table, table.user), floor_collect(&table, Pubkey::new_unique())] {
+    for ix in [schedule_collect(&table, table.user), floor_collect(&table, Pubkey::new_unique())] {
         assert!(ix.accounts.iter().all(|m| !ledgers.contains(&m.pubkey)));
         assert_eq!(ix.accounts.len(), 6);
     }
@@ -1294,7 +1385,7 @@ fn a_collect_request_names_no_ledger() {
 fn the_player_and_their_session_key_may_collect_while_deciding() {
     let table = Table::new();
     for collector in [table.user, table.consenter] {
-        let ix = request_collect(&table, collector);
+        let ix = schedule_collect(&table, collector);
         let result = with_stand_ins().process_instruction(&ix, &collect_accounts(&ix, deciding(&table)));
         assert_eq!(result.raw_result, Ok(()));
         assert_eq!(magic_calls(), vec![6]);
@@ -1305,7 +1396,7 @@ fn the_player_and_their_session_key_may_collect_while_deciding() {
 #[ignore = "needs cargo build-sbf"]
 fn nobody_else_may_collect_while_the_player_is_deciding() {
     let table = Table::new();
-    for ix in [request_collect(&table, Pubkey::new_unique()), floor_collect(&table, Pubkey::new_unique())] {
+    for ix in [schedule_collect(&table, Pubkey::new_unique()), floor_collect(&table, Pubkey::new_unique())] {
         let result = with_stand_ins().process_instruction(&ix, &collect_accounts(&ix, deciding(&table)));
         assert_eq!(result.raw_result, core(casino_core::CoreError::Unauthorized));
         assert!(magic_calls().is_empty(), "nothing scheduled");
@@ -1316,7 +1407,7 @@ fn nobody_else_may_collect_while_the_player_is_deciding() {
 #[ignore = "needs cargo build-sbf"]
 fn a_stranger_may_collect_a_spin_with_nothing_left_to_decide() {
     let table = Table::new();
-    let ix = request_collect(&table, Pubkey::new_unique());
+    let ix = schedule_collect(&table, Pubkey::new_unique());
     let result = with_stand_ins().process_instruction(&ix, &collect_accounts(&ix, finished(&table, Pubkey::new_unique())));
     assert_eq!(result.raw_result, Ok(()));
     assert_eq!(magic_calls(), vec![6]);
@@ -1332,7 +1423,7 @@ fn a_stranger_may_collect_a_spin_with_nothing_left_to_decide() {
 #[ignore = "needs cargo build-sbf"]
 fn a_collected_spin_is_left_and_an_unfinished_one_refused() {
     let table = Table::new();
-    let ix = request_collect(&table, table.user);
+    let ix = schedule_collect(&table, table.user);
     let collected = table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Collected, 0, 5, None);
     let result = with_stand_ins().process_instruction(&ix, &collect_accounts(&ix, collected));
     assert_eq!(result.raw_result, Ok(()));

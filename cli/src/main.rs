@@ -132,6 +132,10 @@ enum Command {
         /// Play as this keypair rather than the admin.
         #[arg(long)]
         wallet: Option<PathBuf>,
+        /// Collect by ScheduleCollect (27), the floor's way, rather than the released clients'
+        /// receipt (22).
+        #[arg(long)]
+        scheduled: bool,
     },
     /// Empties and closes a wallet's vault ledger: brings it home from whichever rollup holds it,
     /// withdraws everything to the wallet, then closes the ledger, its permission and its session
@@ -291,12 +295,12 @@ async fn main() -> Result<()> {
             println!("✅ the spin of {user} is closed, its rent back with the house");
             Ok(())
         }
-        Command::Play { machine, close, wallet } => {
+        Command::Play { machine, close, wallet, scheduled } => {
             let wallet = match wallet {
                 Some(path) => keys::read(&path)?,
                 None => chain.admin.insecure_clone(),
             };
-            play::play(&chain, &wallet, machine, close).await
+            play::play(&chain, &wallet, machine, close, scheduled).await
         }
         Command::ClearLedger { wallet } => clear_ledger(&chain, &keys::read(&wallet)?).await,
         Command::Admin(command) => command.run::<Slots>(&chain).await,
