@@ -170,10 +170,12 @@ hit this because each schedules its own payout. Owner-approved: slots does the s
 - `CallbackReveal`'s collecting publish now carries casino-core's `observe::request_metas`
   (`[user, game, house (w)]`, spin writable) instead of the 11 `collect_metas`.
 
-**To check.** That a stranger repeating `RequestCollect` on a finished spin costs the house only
-task fees and cannot pay twice; that `PayCollect` cannot be fired except by the task; that the
-settle cannot credit a ledger other than the spin's player's; the CU of the floor's inline CPI
-(floor → RequestCollect → Magic program).
+**To check.** That a stranger repeating `ScheduleCollect` on a finished spin cannot pay twice
+(each ask replaces the one task per spin; a collected spin schedules nothing); that `PayCollect`
+cannot be fired except by the house's own task — this rests on the Magic scheduler signing only
+for the executor of the payer that scheduled, which the Mollusk stand-ins do not exercise; that
+the settle cannot credit a ledger other than the spin's player's; the CU of the floor's inline CPI
+(floor → ScheduleCollect → Magic program).
 
 **Asked once (owner decision, 2026-10-11).** Every action happens once; a failure stays visible
 in its state and is never retried. `RequestReveal` asks only from `Bought`; a second ask finds the
