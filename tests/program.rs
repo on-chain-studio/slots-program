@@ -285,3 +285,54 @@ fn a_late_answer_for_an_earlier_round_is_refused() {
     );
     assert_eq!(result.raw_result, core(casino_core::CoreError::WrongStatus));
 }
+
+// HasPlayed (28): MagicBlock Quests' lookup. The quest verifier key alone gets an answer — success
+// or NotPlayed; everyone else gets the same refusal whether the spin exists or not.
+
+fn verifier() -> Pubkey {
+    key(slots::constants::QUEST_VERIFIER.to_bytes())
+}
+
+fn has_played(signer: Pubkey, signs: bool, spin: Pubkey, wallet: Pubkey) -> Instruction {
+    Instruction::new_with_bytes(
+        program(),
+        &[&28u64.to_le_bytes()[..], &wallet.to_bytes()].concat(),
+        vec![AccountMeta::new_readonly(signer, signs), AccountMeta::new_readonly(spin, false)],
+    )
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn the_verifier_learns_whether_a_wallet_has_spun() {
+    let table = Table::new();
+    let ix = has_played(verifier(), true, table.spin, table.user);
+    let played = mollusk().process_instruction(&ix, &[(verifier(), wallet()), (table.spin, table.spin_account(SpinStatus::Collected, 0))]);
+    assert_eq!(played.raw_result, Ok(()));
+    let none = mollusk().process_instruction(&ix, &[(verifier(), wallet()), (table.spin, Account::default())]);
+    assert_eq!(none.raw_result, custom(GameError::NotPlayed));
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn anyone_else_is_refused_the_same_way_spin_or_not() {
+    let table = Table::new();
+    let stranger = Pubkey::new_unique();
+    for spin in [table.spin_account(SpinStatus::Collected, 0), Account::default()] {
+        let ix = has_played(stranger, true, table.spin, table.user);
+        let result = mollusk().process_instruction(&ix, &[(stranger, wallet()), (table.spin, spin.clone())]);
+        assert_eq!(result.raw_result, core(casino_core::CoreError::Unauthorized));
+        let claimed = has_played(verifier(), false, table.spin, table.user);
+        let result = mollusk().process_instruction(&claimed, &[(verifier(), wallet()), (table.spin, spin)]);
+        assert_eq!(result.raw_result, failure(InstructionError::MissingRequiredSignature));
+    }
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn the_spin_must_be_the_wallet_s_own() {
+    let table = Table::new();
+    let other = Table::new();
+    let ix = has_played(verifier(), true, other.spin, table.user);
+    let result = mollusk().process_instruction(&ix, &[(verifier(), wallet()), (other.spin, other.spin_account(SpinStatus::Collected, 0))]);
+    assert_eq!(result.raw_result, core(casino_core::CoreError::InvalidPDA));
+}
