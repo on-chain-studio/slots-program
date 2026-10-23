@@ -14,6 +14,8 @@ pub enum GameError {
     RoundsExhausted    = 12,
     /// A hold names a reel this machine does not have.
     InvalidHold        = 13,
+    /// `HasPlayed`'s "no": the wallet has never spun.
+    NotPlayed          = 14,
 }
 
 impl From<GameError> for ProgramError {

@@ -13,6 +13,10 @@ use crate::Slots;
 /// instruction, see `ADMINS` below.
 pub const ANALYTICS_READERS: [Pubkey; 2] = [DEV_KEY, OPS_KEY];
 
+/// The key MagicBlock Quests' lookup signs `HasPlayed` with. It holds nothing and signs only
+/// simulations; whoever has it learns whether a wallet has ever spun, and nothing else.
+pub const QUEST_VERIFIER: Pubkey = Pubkey::from_str_const("4cd9zCgws9FKUmkLudUnyXzszc5zh71i1LFRerWkwcVr");
+
 /// The casino floor program. It is top-level over spins, so it must be a member of their permission.
 pub const PRIVATE_CASINO: Pubkey = Pubkey::from_str_const("EzQPZpLj8DccG7M7VCyr9kEm4wFLZi6pDGfxrAsLNz6z");
 

@@ -35,6 +35,7 @@ pub mod instructions {
     pub mod resolve_collect;
     pub mod pay_collect;
     pub mod upgrade_permissions;
+    pub mod has_played;
 }
 
 pub mod state;
@@ -478,5 +479,12 @@ impl Slots {
             collector.info.as_view(), user.info.as_view(), house.info.as_view(), spin.info.as_view(),
             magic_context.info.as_view(), magic_program.info.as_view(),
         )?)
+    }
+
+    /// MagicBlock Quests' lookup: has this wallet ever spun? Simulated on the TEE by the quest
+    /// verifier key only; success means yes, `NotPlayed` no.
+    #[instruction(discriminator = 28)]
+    pub fn has_played<'a>(&self, verifier: &Signer<'a>, spin: &Account<'a>, args: has_played::HasPlayed) -> Result<()> {
+        Ok(args.process(verifier.info.as_view(), spin.info.as_view())?)
     }
 }
