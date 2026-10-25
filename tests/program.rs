@@ -1816,40 +1816,7 @@ fn claim(table: &Table) -> Instruction {
         AccountMeta::new_readonly(table.spin, false),
         AccountMeta::new(magic_context(), false),
         AccountMeta::new_readonly(magic(), false),
-        AccountMeta::new_readonly(fixed(casino_core::vault::ledger(&core_key(table.user))), false),
     ])
-}
-
-/// A vault ledger as the rollup shows it, owned by `owner`.
-fn ledger_owned_by(owner: Pubkey) -> Account {
-    Account { lamports: SOL, data: vec![1; 160], owner, executable: false, rent_epoch: 0 }
-}
-
-#[test]
-#[ignore = "needs cargo build-sbf"]
-fn a_claim_whose_ledger_cannot_be_paid_here_is_refused() {
-    let table = Table::new();
-    let ix = claim(&table);
-    let k = |i: usize| ix.accounts[i].pubkey;
-    let accounts = |ledger: Account| vec![
-        (k(0), wallet()), (k(1), wallet()), (k(2), owned(vec![])), (k(3), owed_spin(&table, 700)),
-        (k(4), wallet()), (k(5), builtin(magic(), "fake_magic")), (k(6), ledger),
-    ];
-    let elsewhere = fixed(casino_core::ids::DELEGATION_PROGRAM_ID);
-    for (ledger, why) in [(ledger_owned_by(elsewhere), "on another rollup"), (wallet(), "closed")] {
-        let result = with_stand_ins().process_instruction(&ix, &accounts(ledger));
-        assert_eq!(result.raw_result, custom(GameError::LedgerElsewhere), "{why}");
-        assert!(magic_calls().is_empty(), "{why}: nothing scheduled");
-    }
-    let mut wrong = ix.clone();
-    wrong.accounts[6].pubkey = Pubkey::new_unique();
-    let k = |i: usize| wrong.accounts[i].pubkey;
-    let accounts = vec![
-        (k(0), wallet()), (k(1), wallet()), (k(2), owned(vec![])), (k(3), owed_spin(&table, 700)),
-        (k(4), wallet()), (k(5), builtin(magic(), "fake_magic")), (k(6), ledger_owned_by(vault())),
-    ];
-    let result = with_stand_ins().process_instruction(&wrong, &accounts);
-    assert_eq!(result.raw_result, core(casino_core::CoreError::InvalidPDA), "another wallet's ledger");
 }
 
 #[test]
@@ -1860,7 +1827,7 @@ fn anyone_may_claim_and_the_house_schedules_the_payout() {
     let k = |i: usize| ix.accounts[i].pubkey;
     let accounts = |owed| vec![
         (k(0), wallet()), (k(1), wallet()), (k(2), owned(vec![])), (k(3), owed_spin(&table, owed)),
-        (k(4), wallet()), (k(5), builtin(magic(), "fake_magic")), (k(6), ledger_owned_by(vault())),
+        (k(4), wallet()), (k(5), builtin(magic(), "fake_magic")),
     ];
     let result = with_stand_ins().process_instruction(&ix, &accounts(700));
     assert_eq!(result.raw_result, Ok(()));

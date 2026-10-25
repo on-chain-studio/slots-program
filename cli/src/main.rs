@@ -312,13 +312,8 @@ async fn main() -> Result<()> {
             let wallet = keys::read(&wallet)?;
             let player = Player::new(&chain, &wallet, slots::ID);
             let user = wallet.pubkey();
-            if !ledger_delegated(&chain, &user).await? {
-                anyhow::bail!("the ledger of {user} is not on a rollup — nothing could be paid into it; bring it there first");
-            }
             let at = player.rollup().await?;
-            let ix = built(generated::Slots::claim_referral_instruction(
-                user, user, house(), spin_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM, casino_core::vault::ledger(&user),
-            ))?;
+            let ix = built(generated::Slots::claim_referral_instruction(user, user, house(), spin_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM))?;
             at.send(&[ix], &[&wallet]).await?;
             println!("✅ claimed: the house's task pays {user} what it is owed");
             Ok(())
@@ -361,12 +356,7 @@ async fn main() -> Result<()> {
                 Ok(_) => println!("✅ the spin of {user} is closed, its rent back with the house"),
                 // What a referrer is owed lives on their spin: it is paid out first, then closed.
                 Err(e) if format!("{e:#}").contains(STILL_OWED) => {
-                    if !ledger_delegated(&chain, &user).await? {
-                        anyhow::bail!("{user} is owed referral earnings, but their ledger is not on a rollup to pay them into — the spin stays");
-                    }
-                    let claim = built(generated::Slots::claim_referral_instruction(
-                        admin, user, house(), spin_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM, casino_core::vault::ledger(&user),
-                    ))?;
+                    let claim = built(generated::Slots::claim_referral_instruction(admin, user, house(), spin_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM))?;
                     rollup.send(&[claim], &[&chain.admin]).await?;
                     println!("⏸  {user} is owed referral earnings: claimed — the house's task pays them; run close-spin again once it has");
                 }
@@ -609,14 +599,6 @@ mod tests {
 
 /// `StillOwed`: the spin's player has referral earnings to be paid before it may close.
 const STILL_OWED: &str = "Custom(15)";
-
-/// Whether a wallet's ledger is delegated, read where that is true: basenet. On the rollup a ledger
-/// delegated there and one still at home both read as the vault's, so the claim cannot tell them
-/// apart, and a payout to one at home would fail.
-async fn ledger_delegated(chain: &Chain, user: &Pubkey) -> Result<bool> {
-    let ledger = casino_core::vault::ledger(user);
-    Ok(chain.base.account(&ledger).await?.is_some_and(|a| a.owner == casino_core::ids::DELEGATION_PROGRAM_ID))
-}
 
 fn print_counters(c: &Counters) {
     println!("  referred    {} players  ·  unreferred {}", c.players_referred, c.players_unreferred);
