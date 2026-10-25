@@ -128,8 +128,8 @@ enum Command {
     /// Admin: drops a stranded spin and returns its rent to the house. Rollup.
     CloseSpin { player: String },
     /// A player's referral section: who referred them, and what they are owed and have earned as
-    /// a referrer. The admin's by default.
-    Referral { player: Option<String> },
+    /// a referrer. Read as the player — a spin is private to them on the TEE — the admin by default.
+    Referral { wallet: Option<PathBuf> },
     /// Asks the house to pay what this wallet is owed as a referrer into its ledger; the wallet signs.
     ClaimReferral { wallet: PathBuf },
     /// Admin, basenet: grows the analytics account to hold the referral counters. Undelegate it
@@ -290,9 +290,14 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
-        Command::Referral { player } => {
-            let user = player.map(|p| key(&p)).transpose()?.unwrap_or(admin);
-            let rollup = chain.rollup().await?;
+        Command::Referral { wallet } => {
+            let wallet = match wallet { Some(path) => keys::read(&path)?, None => chain.admin.insecure_clone() };
+            let user = wallet.pubkey();
+            let player = Player::new(&chain, &wallet, slots::ID);
+            let rollup = player.rollup().await?;
+            if let Some(ledger) = player.ledger_at(&rollup).await? {
+                println!("ledger {} lamports", ledger.sol);
+            }
             let Some(account) = rollup.account(&spin_of(&user)).await? else {
                 println!("no spin for {user}");
                 return Ok(());
@@ -343,11 +348,9 @@ async fn main() -> Result<()> {
         }
         Command::CloseSpin { player } => {
             let user = key(&player)?;
+            // A spin is private to its player on the TEE, so the admin cannot see one to check for
+            // it: this sends, and the program refuses a spin that is not there.
             let rollup = chain.rollup().await?;
-            if rollup.account(&spin_of(&user)).await?.is_none() {
-                println!("⏭  no spin for {user}");
-                return Ok(());
-            }
             let ix = built(generated::Slots::close_spin_instruction(admin, house(), spin_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM, CloseSpin { user }))?;
             rollup.send(&[ix], &[&chain.admin]).await?;
             println!("✅ the spin of {user} is closed, its rent back with the house");
@@ -588,7 +591,7 @@ mod tests {
 
 fn print_counters(c: &Counters) {
     println!("  referred    {} players  ·  unreferred {}", c.players_referred, c.players_unreferred);
-    println!("  referrers   owed {} SOL  ·  earned {} SOL", sol(c.owed), sol(c.earned));
+    println!("  referrers   owed {} lamports  ·  earned {} lamports", c.owed, c.earned);
 }
 
 fn print_referral(user: &Pubkey, r: &Referral) {
@@ -596,5 +599,5 @@ fn print_referral(user: &Pubkey, r: &Referral) {
         Some(by) => println!("{user}  referred by {by} since {}", r.since),
         None => println!("{user}  not referred"),
     }
-    println!("  as a referrer: owed {} SOL, earned {} SOL", sol(r.owed), sol(r.earned));
+    println!("  as a referrer: owed {} lamports, earned {} lamports", r.owed, r.earned);
 }
