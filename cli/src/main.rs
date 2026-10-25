@@ -133,7 +133,7 @@ enum Command {
     /// Asks the house to pay what this wallet is owed as a referrer into its ledger; the wallet signs.
     ClaimReferral { wallet: PathBuf },
     /// Admin, basenet: grows the analytics account to hold the referral counters. Undelegate it
-    /// first (`admin undelegate-pda analytics`) and delegate it again after (`admin delegate-pda analytics`).
+    /// first (`undelegate-pda analytics`) and delegate it again after (`delegate-pda analytics`).
     GrowAnalytics,
     /// Plays one real spin end to end on the shelf's machine at this index; the machine's mode
     /// decides how — lines spin once, hold keeps a reel through its respins, gamble climbs a rung.
@@ -316,7 +316,7 @@ async fn main() -> Result<()> {
         Command::GrowAnalytics => {
             let account = chain.base.account(&analytics()).await?.context("no analytics account — run `setup`")?;
             if account.owner != slots::ID {
-                anyhow::bail!("analytics is delegated — run `admin undelegate-pda analytics` first");
+                anyhow::bail!("analytics is delegated — run `undelegate-pda analytics` first");
             }
             if account.data.len() >= Analytics::REFERRALS_SIZE {
                 println!("⏭  analytics already holds the referral counters ({} bytes)", account.data.len());
@@ -324,7 +324,7 @@ async fn main() -> Result<()> {
             }
             let ix = built(generated::Slots::grow_analytics_instruction(admin, analytics(), SYSTEM_PROGRAM, GrowAnalytics { len: Analytics::REFERRALS_SIZE as u32 }))?;
             chain.base.send(&[ix], &[&chain.admin]).await?;
-            println!("✅ analytics grown {} → {} bytes — now `admin delegate-pda analytics`", account.data.len(), Analytics::REFERRALS_SIZE);
+            println!("✅ analytics grown {} → {} bytes — now `delegate-pda analytics`", account.data.len(), Analytics::REFERRALS_SIZE);
             Ok(())
         }
         Command::Spin { player } => {

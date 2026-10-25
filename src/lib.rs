@@ -496,12 +496,17 @@ impl Slots {
     pub fn credit_referral<'a>(
         &self,
         executor: &Signer<'a>,
-        house: &Account<'a>,
+        house: &mut Account<'a>,
         spin: &mut Account<'a>,
         analytics: &mut Account<'a>,
+        ephemeral_vault: &mut Account<'a>,
+        magic_program: &Account<'a>,
         args: credit_referral::CreditReferral,
     ) -> Result<()> {
-        Ok(args.process(executor.info.as_view(), house.info.as_view(), spin.info.as_view(), analytics.info.as_view())?)
+        Ok(args.process(
+            executor.info.as_view(), house.info.as_view(), spin.info.as_view(), analytics.info.as_view(),
+            ephemeral_vault.info.as_view(), magic_program.info.as_view(),
+        )?)
     }
 
     /// Names no ledger: anyone asks, and the house's own `PayReferral` task pays the referrer.

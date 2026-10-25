@@ -1742,13 +1742,49 @@ fn credit(referrer: &Table, amount: u64) -> Instruction {
     )
 }
 
+fn credit_accounts(ix: &Instruction, spin: Account) -> Vec<(Pubkey, Account)> {
+    let k = |i: usize| ix.accounts[i].pubkey;
+    vec![
+        (k(0), wallet()), (k(1), owned(vec![])), (k(2), spin), (k(3), grown_books()),
+        (k(4), wallet()), (k(5), builtin(magic(), "fake_magic")),
+    ]
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_referrer_s_spin_from_before_referrals_is_grown_by_its_first_credit() {
+    let referrer = Table::new();
+    let watched = trailer(observe::RESULT, Pubkey::new_unique(), [3; 64]);
+    let before = table_spin(&referrer, Spin::PRE_REFERRAL_SIZE, Some(watched));
+    let ix = credit(&referrer, 1_000);
+    let result = with_stand_ins().process_instruction(&ix, &credit_accounts(&ix, before));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![13], "grown in place");
+    assert_eq!(referrer.trailer_after(&result.resulting_accounts), watched, "the floor's trailer moved with the end");
+    assert_eq!(referrer.generation_after(&result.resulting_accounts), 4);
+    let section = section_after(&referrer, &result.resulting_accounts);
+    assert_eq!((section.referrer(), section.owed, section.earned), (None, 1_000, 1_000));
+    assert_eq!(counters_after(&result.resulting_accounts), Counters { players_unreferred: 1, owed: 1_000, earned: 1_000, ..Counters::default() });
+    println!("credit_referral, growing the spin: {} CU", result.compute_units_consumed);
+
+    // One without the trailer yet grows too, with nothing for the floor to show.
+    let before = table_spin(&referrer, Spin::PERSISTENT_SIZE, None);
+    let result = with_stand_ins().process_instruction(&ix, &credit_accounts(&ix, before));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(section_after(&referrer, &result.resulting_accounts).owed, 1_000);
+    assert_eq!(&referrer.data_after(&result.resulting_accounts)[Spin::OBSERVED_SIZE - observe::SIZE..], &[0; observe::SIZE][..]);
+}
+
+fn table_spin(table: &Table, size: usize, observed: Option<Observable>) -> Account {
+    table.spin_at(size, SpinStatus::Collected, 0, 4, observed)
+}
+
 #[test]
 #[ignore = "needs cargo build-sbf"]
 fn the_house_s_credit_adds_to_what_the_referrer_is_owed() {
     let referrer = Table::new();
     let ix = credit(&referrer, referral::cut(STAKE));
-    let k = |i: usize| ix.accounts[i].pubkey;
-    let accounts = vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), owed_spin(&referrer, 50)), (k(3), grown_books())];
+    let accounts = credit_accounts(&ix, owed_spin(&referrer, 50));
     let result = with_stand_ins().process_instruction(&ix, &accounts);
     assert_eq!(result.raw_result, Ok(()));
     let section = section_after(&referrer, &result.resulting_accounts);
@@ -1758,9 +1794,7 @@ fn the_house_s_credit_adds_to_what_the_referrer_is_owed() {
 
     let mut stranger = ix.clone();
     stranger.accounts[0].pubkey = Pubkey::new_unique();
-    let k = |i: usize| stranger.accounts[i].pubkey;
-    let accounts = vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), owed_spin(&referrer, 50)), (k(3), grown_books())];
-    let result = with_stand_ins().process_instruction(&stranger, &accounts);
+    let result = with_stand_ins().process_instruction(&stranger, &credit_accounts(&stranger, owed_spin(&referrer, 50)));
     assert_eq!(result.raw_result, core(casino_core::CoreError::Unauthorized));
 }
 
@@ -1769,9 +1803,7 @@ fn the_house_s_credit_adds_to_what_the_referrer_is_owed() {
 fn a_credit_to_a_spin_that_is_gone_is_the_house_s() {
     let referrer = Table::new();
     let ix = credit(&referrer, 1_000);
-    let k = |i: usize| ix.accounts[i].pubkey;
-    let accounts = vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), no_spin()), (k(3), grown_books())];
-    let result = with_stand_ins().process_instruction(&ix, &accounts);
+    let result = with_stand_ins().process_instruction(&ix, &credit_accounts(&ix, no_spin()));
     assert_eq!(result.raw_result, Ok(()));
     assert_eq!(counters_after(&result.resulting_accounts), Counters::default());
 }
