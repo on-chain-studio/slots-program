@@ -1,5 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use casino_core::chain::*;
+use casino_core::referral::Referrer;
 use casino_core::{pda, receipt, vault, CoreError};
 
 use crate::state::Config;
@@ -12,6 +13,8 @@ use crate::state::Config;
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestBet {
     pub machine_id: u64,
+    /// Who referred the player. Locked only if this bet creates their spin; ignored after.
+    pub referrer: Referrer,
 }
 
 impl RequestBet {
@@ -54,9 +57,10 @@ impl RequestBet {
 
         // The consenter rides the args so the callback can record it on the spin: the vault is
         // about to prove this key may act for the user, and the round decisions reuse that proof.
-        let mut args = Vec::with_capacity(8 + 32);
+        let mut args = Vec::with_capacity(8 + 32 + 32);
         args.extend_from_slice(&self.machine_id.to_le_bytes());
         args.extend_from_slice(wallet.address().as_ref());
+        args.extend_from_slice(self.referrer.bytes());
 
         receipt::create(
             vault_program, house, house_ledger, wallet, receipt_account, ephemeral_vault,

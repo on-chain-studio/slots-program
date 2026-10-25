@@ -13,6 +13,7 @@ use std::cell::RefCell;
 
 use bytemuck::Zeroable;
 use casino_core::observe::{self, Observable};
+use casino_core::referral::Referral;
 use mollusk_svm::program::{create_keyed_account_for_builtin_program, keyed_account_for_system_program, Builtin};
 use mollusk_svm::Mollusk;
 use pinocchio::error::ProgramError;
@@ -526,13 +527,16 @@ impl Table {
             // Before run rules, terms were 344 bytes; the head is all a bet reads of them.
             account.data.truncate(Spin::SIZE + 344);
         }
-        if [Spin::PERSISTENT_SIZE, Spin::FIRST_OBSERVED_SIZE, Spin::OBSERVED_SIZE, Spin::SIZE + 344 + 8].contains(&size) {
+        if [Spin::PERSISTENT_SIZE, Spin::FIRST_OBSERVED_SIZE, Spin::PRE_REFERRAL_SIZE, Spin::OBSERVED_SIZE, Spin::SIZE + 344 + 8].contains(&size) {
             account.data.extend_from_slice(&generation.to_le_bytes());
         }
         if size == Spin::FIRST_OBSERVED_SIZE {
             account.data.extend_from_slice(&first_layout([0xEE; 32]));
         }
         if size == Spin::OBSERVED_SIZE {
+            account.data.extend_from_slice(bytemuck::bytes_of(&Referral::new(None, &self.user.to_bytes(), 0)));
+        }
+        if size == Spin::OBSERVED_SIZE || size == Spin::PRE_REFERRAL_SIZE {
             account.data.extend_from_slice(bytemuck::bytes_of(&observed.unwrap_or(Observable::new(observe::KIND_SLOTS))));
         }
         assert_eq!(account.data.len(), size);
@@ -1598,4 +1602,243 @@ fn the_spin_must_be_the_wallet_s_own() {
     let ix = has_played(verifier(), true, other.spin, table.user);
     let result = mollusk().process_instruction(&ix, &[(verifier(), wallet()), (other.spin, other.spin_account(SpinStatus::Collected, 0))]);
     assert_eq!(result.raw_result, core(casino_core::CoreError::InvalidPDA));
+}
+
+// ── Referrals ──────────────────────────────────────────────────────────────────────────────
+
+use casino_core::referral::{self, Counters};
+
+/// The books grown to hold the referral counters.
+fn grown_books() -> Account {
+    let mut account = books();
+    account.data.resize(Analytics::REFERRALS_SIZE, 0);
+    account
+}
+
+fn counters_after(accounts: &[(Pubkey, Account)]) -> Counters {
+    let data = &accounts.iter().find(|(k, _)| *k == pda(&[b"analytics"])).unwrap().1.data;
+    *bytemuck::from_bytes(&data[Analytics::SIZE..Analytics::REFERRALS_SIZE])
+}
+
+fn section_after(table: &Table, accounts: &[(Pubkey, Account)]) -> referral::Referral {
+    referral::Referral::read(table.data_after(accounts), Spin::REFERRAL_AT).expect("a referral section")
+}
+
+/// ResolveBet naming `referrer` after its consenter, as the receipt carries it.
+fn referred_bet(table: &Table, referrer: Pubkey, rest: &[Pubkey]) -> Instruction {
+    let mut ix = resolve_bet(table, rest);
+    ix.data.extend_from_slice(referrer.as_ref());
+    ix
+}
+
+fn magic_context() -> Pubkey {
+    fixed(casino_core::ids::MAGIC_CONTEXT_ID)
+}
+
+/// A spin at the current size whose player is owed `owed`.
+fn owed_spin(table: &Table, owed: u64) -> Account {
+    let mut account = table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Collected, 0, 3, None);
+    let section = referral::Referral { owed, earned: owed, ..referral::Referral::new(None, &table.user.to_bytes(), 0) };
+    section.write(&mut account.data, Spin::REFERRAL_AT).unwrap();
+    account
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_referred_first_bet_locks_its_referrer_and_schedules_the_credit() {
+    let table = Table::fixed();
+    let referrer = Pubkey::new_unique();
+    let ix = referred_bet(&table, referrer, &[magic_context()]);
+    let mut accounts = bet_accounts(&ix, &table, no_spin(), vec![wallet()]);
+    accounts[7].1 = grown_books();
+    let result = with_stand_ins().process_instruction(&ix, &accounts);
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![12, 6], "created, then the credit scheduled");
+    assert_eq!(calls_to(magic())[0][4..8], (Spin::OBSERVED_SIZE as u32).to_le_bytes());
+    assert_eq!(section_after(&table, &result.resulting_accounts).referrer, referrer.to_bytes());
+    assert_eq!(counters_after(&result.resulting_accounts), Counters { players_referred: 1, ..Counters::default() });
+    assert_eq!(table.trailer_after(&result.resulting_accounts).stake, STAKE, "the trailer still last");
+    println!("resolve_bet, creating a referred spin: {} CU", result.compute_units_consumed);
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_referred_bet_without_the_magic_context_is_refused() {
+    let table = Table::new();
+    let ix = referred_bet(&table, Pubkey::new_unique(), &[]);
+    let result = with_stand_ins().process_instruction(&ix, &bet_accounts(&ix, &table, no_spin(), vec![]));
+    assert_eq!(result.raw_result, failure(#[allow(deprecated)] InstructionError::NotEnoughAccountKeys));
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_player_cannot_refer_themselves() {
+    let table = Table::new();
+    let ix = referred_bet(&table, table.user, &[]);
+    let mut accounts = bet_accounts(&ix, &table, no_spin(), vec![]);
+    accounts[7].1 = grown_books();
+    let result = with_stand_ins().process_instruction(&ix, &accounts);
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![12], "no credit to schedule");
+    assert_eq!(section_after(&table, &result.resulting_accounts).referrer(), None);
+    assert_eq!(counters_after(&result.resulting_accounts).players_unreferred, 1);
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_spin_from_before_referrals_grows_unreferred_whoever_the_bet_names() {
+    let table = Table::new();
+    let ix = referred_bet(&table, Pubkey::new_unique(), &[magic_context()]);
+    let before = table.spin_at(Spin::PRE_REFERRAL_SIZE, SpinStatus::Collected, 0, 4, None);
+    let mut accounts = bet_accounts(&ix, &table, before, vec![wallet()]);
+    accounts[7].1 = grown_books();
+    let result = with_stand_ins().process_instruction(&ix, &accounts);
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![13], "grown in place, and nothing scheduled");
+    assert_eq!(table.data_after(&result.resulting_accounts).len(), Spin::OBSERVED_SIZE);
+    assert_eq!(section_after(&table, &result.resulting_accounts).referrer(), None);
+    assert_eq!(table.generation_after(&result.resulting_accounts), 5);
+    assert_eq!(counters_after(&result.resulting_accounts), Counters { players_unreferred: 1, ..Counters::default() });
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_referred_spin_s_next_bet_credits_its_referrer_again_and_counts_nobody() {
+    let table = Table::new();
+    let referrer = Pubkey::new_unique();
+    let mut before = table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Collected, 0, 2, None);
+    referral::Referral::new(Some(&referrer.to_bytes()), &table.user.to_bytes(), 9).write(&mut before.data, Spin::REFERRAL_AT).unwrap();
+    // The bet names nobody: the locked referrer is the one credited.
+    let ix = resolve_bet(&table, &[magic_context()]);
+    let mut accounts = bet_accounts(&ix, &table, before, vec![wallet()]);
+    accounts[7].1 = grown_books();
+    let result = with_stand_ins().process_instruction(&ix, &accounts);
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![6]);
+    let section = section_after(&table, &result.resulting_accounts);
+    assert_eq!((section.referrer, section.since), (referrer.to_bytes(), 9));
+    assert_eq!(counters_after(&result.resulting_accounts), Counters::default());
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn books_not_grown_yet_never_stop_a_bet() {
+    let table = Table::new();
+    let ix = referred_bet(&table, Pubkey::new_unique(), &[magic_context()]);
+    let result = with_stand_ins().process_instruction(&ix, &bet_accounts(&ix, &table, no_spin(), vec![wallet()]));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![12, 6]);
+}
+
+fn credit(referrer: &Table, amount: u64) -> Instruction {
+    let ix = referral::credit_instruction(
+        &core_key(program()), &core_key(pda(&[b"house"])), &core_key(referrer.spin), &slots::constants::ANALYTICS,
+        slots::SlotsInstruction::CREDIT_REFERRAL, amount,
+    );
+    Instruction::new_with_bytes(
+        program(),
+        &ix.data,
+        ix.accounts.iter().map(|m| AccountMeta { pubkey: fixed(m.pubkey), is_signer: m.is_signer, is_writable: m.is_writable }).collect(),
+    )
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn the_house_s_credit_adds_to_what_the_referrer_is_owed() {
+    let referrer = Table::new();
+    let ix = credit(&referrer, referral::cut(STAKE));
+    let k = |i: usize| ix.accounts[i].pubkey;
+    let accounts = vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), owed_spin(&referrer, 50)), (k(3), grown_books())];
+    let result = with_stand_ins().process_instruction(&ix, &accounts);
+    assert_eq!(result.raw_result, Ok(()));
+    let section = section_after(&referrer, &result.resulting_accounts);
+    assert_eq!((section.owed, section.earned), (50 + STAKE / 100, 50 + STAKE / 100));
+    assert_eq!(counters_after(&result.resulting_accounts), Counters { owed: STAKE / 100, earned: STAKE / 100, ..Counters::default() });
+    println!("credit_referral: {} CU", result.compute_units_consumed);
+
+    let mut stranger = ix.clone();
+    stranger.accounts[0].pubkey = Pubkey::new_unique();
+    let k = |i: usize| stranger.accounts[i].pubkey;
+    let accounts = vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), owed_spin(&referrer, 50)), (k(3), grown_books())];
+    let result = with_stand_ins().process_instruction(&stranger, &accounts);
+    assert_eq!(result.raw_result, core(casino_core::CoreError::Unauthorized));
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_credit_to_a_spin_that_is_gone_is_the_house_s() {
+    let referrer = Table::new();
+    let ix = credit(&referrer, 1_000);
+    let k = |i: usize| ix.accounts[i].pubkey;
+    let accounts = vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), no_spin()), (k(3), grown_books())];
+    let result = with_stand_ins().process_instruction(&ix, &accounts);
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(counters_after(&result.resulting_accounts), Counters::default());
+}
+
+fn claim(table: &Table) -> Instruction {
+    Instruction::new_with_bytes(program(), &30u64.to_le_bytes(), vec![
+        AccountMeta::new_readonly(Pubkey::new_unique(), true),
+        AccountMeta::new_readonly(table.user, false),
+        AccountMeta::new(pda(&[b"house"]), false),
+        AccountMeta::new_readonly(table.spin, false),
+        AccountMeta::new(magic_context(), false),
+        AccountMeta::new_readonly(magic(), false),
+    ])
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn anyone_may_claim_and_the_house_schedules_the_payout() {
+    let table = Table::new();
+    let ix = claim(&table);
+    let k = |i: usize| ix.accounts[i].pubkey;
+    let accounts = |owed| vec![
+        (k(0), wallet()), (k(1), wallet()), (k(2), owned(vec![])), (k(3), owed_spin(&table, owed)),
+        (k(4), wallet()), (k(5), builtin(magic(), "fake_magic")),
+    ];
+    let result = with_stand_ins().process_instruction(&ix, &accounts(700));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![6]);
+
+    let result = with_stand_ins().process_instruction(&ix, &accounts(0));
+    assert_eq!(result.raw_result, core(casino_core::CoreError::NothingToCollect));
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn the_house_pays_what_is_owed_once() {
+    let table = Table::new();
+    let ix = referral::pay_instruction(
+        &core_key(program()), &core_key(pda(&[b"house"])), &core_key(table.spin), &core_key(table.user),
+        &slots::constants::ANALYTICS, slots::SlotsInstruction::PAY_REFERRAL,
+    );
+    let ix = Instruction::new_with_bytes(
+        program(),
+        &ix.data,
+        ix.accounts.iter().map(|m| AccountMeta { pubkey: fixed(m.pubkey), is_signer: m.is_signer, is_writable: m.is_writable }).collect(),
+    );
+    let k = |i: usize| ix.accounts[i].pubkey;
+    let mut books = grown_books();
+    bytemuck::from_bytes_mut::<Counters>(&mut books.data[Analytics::SIZE..]).owed = 700;
+    let accounts = vec![
+        (k(0), wallet()), (k(1), owned(vec![])), (k(2), wallet()), (k(3), owed_spin(&table, 700)),
+        (k(4), wallet()), (k(5), builtin(vault(), "fake_vault")), (k(6), books),
+    ];
+    let result = with_stand_ins().process_instruction(&ix, &accounts);
+    assert_eq!(result.raw_result, Ok(()));
+    let settles = calls_to(vault());
+    assert_eq!(settles.len(), 1);
+    assert_eq!(u64::from_le_bytes(settles[0][settles[0].len() - 8..].try_into().unwrap()), 700);
+    let section = section_after(&table, &result.resulting_accounts);
+    assert_eq!((section.owed, section.earned), (0, 700));
+    assert_eq!(counters_after(&result.resulting_accounts).owed, 0);
+    println!("pay_referral: {} CU", result.compute_units_consumed);
+
+    // Fired again with nothing owed, it pays nothing.
+    let mut accounts = accounts;
+    accounts[3].1 = owed_spin(&table, 0);
+    let result = with_stand_ins().process_instruction(&ix, &accounts);
+    assert_eq!(result.raw_result, Ok(()));
+    assert!(calls_to(vault()).is_empty());
 }

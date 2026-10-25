@@ -3,9 +3,12 @@ use casino_core::chain::*;
 use casino_core::magicblock::{create_ephemeral_account, resize_ephemeral_account, EPHEMERAL_VAULT_ID, MEMBER_READ};
 use casino_core::observe::{self, Observable};
 use casino_core::permission;
+use casino_core::ids::MAGIC_CONTEXT_ID;
+use casino_core::referral::{self, Referral, Referrer};
+use pinocchio::sysvars::{clock::Clock, Sysvar};
 use casino_core::{pda, receipt, CoreError};
 
-use crate::constants::PRIVATE_CASINO;
+use crate::constants::{ANALYTICS, PRIVATE_CASINO};
 use crate::state::analytics::Analytics;
 use crate::state::spin::{self, Spin, SpinStatus};
 use crate::state::Config;
@@ -16,8 +19,12 @@ use crate::state::Config;
 /// A player seated at a casino floor station names it as one more account after these; it
 /// becomes the spin's observer for this bet alone, so the reveal can tell the floor the result.
 /// A bet without one clears it.
+///
+/// A referred player's settle also names the magic context: the stake schedules its referrer's
+/// credit from here, so the client never names the referrer's account.
 /// Accounts: [receipt, vault_authority (signer), config, house, spin, ephemeral_vault,
-///            magic_program, analytics, spin_permission, permission_program, station?]
+///            magic_program, analytics, spin_permission, permission_program, station?,
+///            magic_context?]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct ResolveBet {
     pub human: Pubkey,
@@ -26,6 +33,8 @@ pub struct ResolveBet {
     /// its signature. The vault checked it against the user's ledger before settling, which is
     /// the only authorisation this program could not do itself.
     pub consenter: Pubkey,
+    /// Who referred the player, if the bet named anyone. Read only when the spin is created.
+    pub referrer: Referrer,
 }
 
 impl ResolveBet {
@@ -58,6 +67,8 @@ impl ResolveBet {
         let spin_bump = pda::validate(
             program_id, spin_account, &[b"spin", self.human.as_ref()],
         )?;
+        let first = spin_account.data_len() == 0;
+        let kept = Spin::referral(spin_account);
         let (generation, previous_seed) = if spin_account.data_len() == 0 {
             (1, [0; 32])
         } else {
@@ -102,6 +113,19 @@ impl ResolveBet {
         }
         Spin::set_generation(spin_account, generation)?;
 
+        // The referrer is locked when the spin is first made; a spin grown to this layout was
+        // made before referrals, and its player stays unreferred.
+        let section = match kept {
+            Some(section) => section,
+            None => Referral::new(
+                if first { self.referrer.0.as_ref() } else { None },
+                &self.human.to_bytes(),
+                Clock::get()?.unix_timestamp,
+            ),
+        };
+        Spin::write_referral(spin_account, &section)?;
+        let counted = kept.is_none().then(|| section.referrer().is_some());
+
         {
             let s = Spin::load_mut(spin_account)?;
             s.discriminator = spin::DISCRIMINATOR;
@@ -144,6 +168,21 @@ impl ResolveBet {
         a.lamports_in = a.lamports_in.saturating_add(terms.stake_lamports);
         if let Some(slot) = a.bets_placed.get_mut(self.machine_id as usize) {
             casino_core::analytics::count(slot);
+        }
+        if let Some(referred) = counted {
+            referral::count_player(Analytics::referrals(analytics_account), referred);
+        }
+
+        // The referrer's credit is owed in lamports, so only a SOL stake earns one.
+        if let Some(referrer) = section.referrer().filter(|_| terms.mint == [0; 32]) {
+            let magic_context = rest.iter().find(|a| *a.address() == MAGIC_CONTEXT_ID)
+                .ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let (account, _) = Pubkey::find_program_address(&[b"spin", referrer.as_ref()], program_id);
+            referral::schedule_credit(
+                program_id, house, &[b"house", &[house_bump]], magic_context, magic_program,
+                spin_account.address(), generation, &account, &ANALYTICS,
+                crate::SlotsInstruction::CREDIT_REFERRAL, terms.stake_lamports,
+            )?;
         }
 
         Ok(())

@@ -1,6 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use casino_core::chain::*;
 use casino_core::observe::{self, Observable};
+use casino_core::referral::{self, Referral};
 
 use crate::state::config::{MachineConfig, MAX_REELS};
 
@@ -22,8 +23,9 @@ pub enum SpinStatus {
 /// `["spin", user]` — reusable bet state. Collection retains the resolved result.
 ///
 /// Carries its own `terms`, copied from the shelf at purchase, so a rebalance cannot rewrite a
-/// bet someone already owns. After the terms come the generation and then, last, the casino
-/// floor's [`Observable`] trailer: `[Spin][terms][generation][trailer]`.
+/// bet someone already owns. After the terms come the generation, the player's [`Referral`]
+/// section and then, last, the casino floor's [`Observable`] trailer:
+/// `[Spin][terms][generation][referral][trailer]`.
 #[repr(C)]
 #[derive(Pod, Zeroable, Clone, Copy)]
 pub struct Spin {
@@ -55,9 +57,13 @@ impl Spin {
     /// A bet placed with its terms printed after it.
     pub const WITH_TERMS: usize = Self::SIZE + size_of::<MachineConfig>();
     pub const PERSISTENT_SIZE: usize = Self::WITH_TERMS + 8;
-    /// With the floor's trailer after the generation: what every bet is placed at now. A spin at
-    /// a smaller size is brought to this one by its next bet.
-    pub const OBSERVED_SIZE: usize = Self::PERSISTENT_SIZE + observe::SIZE;
+    /// Where the referral section sits: after the generation, before the trailer.
+    pub const REFERRAL_AT: usize = Self::PERSISTENT_SIZE;
+    /// With the referral section and the floor's trailer after the generation: what every bet is
+    /// placed at now. A spin at a smaller size is brought to this one by its next bet.
+    pub const OBSERVED_SIZE: usize = Self::PERSISTENT_SIZE + referral::SIZE + observe::SIZE;
+    /// With the trailer but before referrals. Its next bet grows it in place, unreferred.
+    pub const PRE_REFERRAL_SIZE: usize = Self::PERSISTENT_SIZE + observe::SIZE;
     /// With the trailer's first layout (136 bytes, `OBSERVE1`), which no floor ever read. Its
     /// next bet grows it to the current one in place.
     pub const FIRST_OBSERVED_SIZE: usize = Self::PERSISTENT_SIZE + 136;
@@ -73,7 +79,7 @@ impl Spin {
         let at = match data.len() {
             Self::WITH_TERMS | Self::LEGACY_WITH_TERMS => return Ok(0),
             Self::LEGACY_PERSISTENT_SIZE => Self::LEGACY_WITH_TERMS,
-            Self::PERSISTENT_SIZE | Self::FIRST_OBSERVED_SIZE | Self::OBSERVED_SIZE => Self::WITH_TERMS,
+            Self::PERSISTENT_SIZE | Self::FIRST_OBSERVED_SIZE | Self::PRE_REFERRAL_SIZE | Self::OBSERVED_SIZE => Self::WITH_TERMS,
             _ => return Err(ProgramError::InvalidAccountData),
         };
         let bytes = data.get(at..at + 8).ok_or(ProgramError::InvalidAccountData)?;
@@ -91,8 +97,19 @@ impl Spin {
     /// trailer existed, or under its first layout, gets it with its next bet, and until then
     /// there is nothing to show.
     pub fn observable(account: &AccountInfo) -> Option<Observable> {
-        if account.data_len() != Self::OBSERVED_SIZE { return None; }
+        if account.data_len() != Self::OBSERVED_SIZE && account.data_len() != Self::PRE_REFERRAL_SIZE { return None; }
         Observable::read_account(account)
+    }
+
+    /// The player's referral section, on a spin at the current size.
+    pub fn referral(account: &AccountInfo) -> Option<Referral> {
+        if account.data_len() != Self::OBSERVED_SIZE { return None; }
+        Referral::read(&account.try_borrow().ok()?, Self::REFERRAL_AT)
+    }
+
+    pub fn write_referral(account: &AccountInfo, section: &Referral) -> ProgramResult {
+        if account.data_len() != Self::OBSERVED_SIZE { return Err(ProgramError::InvalidAccountData); }
+        section.write(&mut account.try_borrow_mut_data()?, Self::REFERRAL_AT)
     }
 
     /// Moves the trailer to `status`, keeping the observer, the stake, the last result and what
