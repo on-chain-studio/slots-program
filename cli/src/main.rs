@@ -352,8 +352,16 @@ async fn main() -> Result<()> {
             // it: this sends, and the program refuses a spin that is not there.
             let rollup = chain.rollup().await?;
             let ix = built(generated::Slots::close_spin_instruction(admin, house(), spin_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM, CloseSpin { user }))?;
-            rollup.send(&[ix], &[&chain.admin]).await?;
-            println!("✅ the spin of {user} is closed, its rent back with the house");
+            match rollup.send(&[ix], &[&chain.admin]).await {
+                Ok(_) => println!("✅ the spin of {user} is closed, its rent back with the house"),
+                // What a referrer is owed lives on their spin: it is paid out first, then closed.
+                Err(e) if format!("{e:#}").contains(STILL_OWED) => {
+                    let claim = built(generated::Slots::claim_referral_instruction(admin, user, house(), spin_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM))?;
+                    rollup.send(&[claim], &[&chain.admin]).await?;
+                    println!("⏸  {user} is owed referral earnings: claimed — the house's task pays them; run close-spin again once it has");
+                }
+                Err(e) => return Err(e),
+            }
             Ok(())
         }
         Command::Play { machine, close, wallet, scheduled, referrer } => {
@@ -588,6 +596,9 @@ mod tests {
         ]);
     }
 }
+
+/// `StillOwed`: the spin's player has referral earnings to be paid before it may close.
+const STILL_OWED: &str = "Custom(15)";
 
 fn print_counters(c: &Counters) {
     println!("  referred    {} players  ·  unreferred {}", c.players_referred, c.players_unreferred);

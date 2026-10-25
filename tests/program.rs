@@ -1874,3 +1874,30 @@ fn the_house_pays_what_is_owed_once() {
     assert_eq!(result.raw_result, Ok(()));
     assert!(calls_to(vault()).is_empty());
 }
+
+fn close_spin(table: &Table) -> Instruction {
+    let mut data = 7u64.to_le_bytes().to_vec();
+    data.extend_from_slice(table.user.as_ref());
+    Instruction::new_with_bytes(program(), &data, vec![
+        AccountMeta::new_readonly(fixed(casino_core::ids::OPS_KEY), true),
+        AccountMeta::new(pda(&[b"house"]), false),
+        AccountMeta::new(table.spin, false),
+        AccountMeta::new(fixed(casino_core::ids::EPHEMERAL_VAULT_ID), false),
+        AccountMeta::new_readonly(magic(), false),
+    ])
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_spin_still_owed_is_not_closed_until_it_is_paid() {
+    let table = Table::new();
+    let ix = close_spin(&table);
+    let k = |i: usize| ix.accounts[i].pubkey;
+    let accounts = |owed| vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), owed_spin(&table, owed)), (k(3), wallet()), (k(4), builtin(magic(), "fake_magic"))];
+    let result = with_stand_ins().process_instruction(&ix, &accounts(700));
+    assert_eq!(result.raw_result, custom(GameError::StillOwed));
+    assert!(magic_calls().is_empty());
+    let result = with_stand_ins().process_instruction(&ix, &accounts(0));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![14], "closed once nothing is owed");
+}
