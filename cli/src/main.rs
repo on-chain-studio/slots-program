@@ -352,7 +352,7 @@ async fn main() -> Result<()> {
             // A spin is private to its player on the TEE, so the admin cannot see one to check for
             // it: this sends, and the program refuses a spin that is not there.
             let rollup = chain.rollup().await?;
-            let ix = built(generated::Slots::close_spin_instruction(admin, house(), spin_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM, CloseSpin { user }))?;
+            let ix = built(generated::Slots::close_spin_instruction(admin, house(), spin_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM, analytics(), CloseSpin { user }))?;
             match rollup.send(&[ix], &[&chain.admin]).await {
                 Ok(_) => println!("✅ the spin of {user} is closed, its rent back with the house"),
                 // What a referrer is owed lives on their spin: it is paid out first, then closed.

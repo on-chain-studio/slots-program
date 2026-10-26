@@ -1909,7 +1909,15 @@ fn close_spin(table: &Table) -> Instruction {
         AccountMeta::new(table.spin, false),
         AccountMeta::new(fixed(casino_core::ids::EPHEMERAL_VAULT_ID), false),
         AccountMeta::new_readonly(magic(), false),
+        AccountMeta::new(pda(&[b"analytics"]), false),
     ])
+}
+
+fn counted(referred: u64, unreferred: u64) -> Account {
+    let mut books = grown_books();
+    *bytemuck::from_bytes_mut::<Counters>(&mut books.data[Analytics::SIZE..Analytics::REFERRALS_SIZE]) =
+        Counters { players_referred: referred, players_unreferred: unreferred, ..Counters::default() };
+    books
 }
 
 #[test]
@@ -1918,13 +1926,19 @@ fn a_spin_still_owed_is_not_closed_until_it_is_paid() {
     let table = Table::new();
     let ix = close_spin(&table);
     let k = |i: usize| ix.accounts[i].pubkey;
-    let accounts = |owed| vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), owed_spin(&table, owed)), (k(3), wallet()), (k(4), builtin(magic(), "fake_magic"))];
-    let result = with_stand_ins().process_instruction(&ix, &accounts(700));
+    let accounts = |spin| vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), spin), (k(3), wallet()), (k(4), builtin(magic(), "fake_magic")), (k(5), counted(4, 6))];
+    let result = with_stand_ins().process_instruction(&ix, &accounts(owed_spin(&table, 700)));
     assert_eq!(result.raw_result, custom(GameError::StillOwed));
     assert!(magic_calls().is_empty());
-    let result = with_stand_ins().process_instruction(&ix, &accounts(0));
+    let result = with_stand_ins().process_instruction(&ix, &accounts(owed_spin(&table, 0)));
     assert_eq!(result.raw_result, Ok(()));
     assert_eq!(magic_calls(), vec![14], "closed once nothing is owed");
+    assert_eq!(counters_after(&result.resulting_accounts), Counters { players_referred: 4, players_unreferred: 5, ..Counters::default() });
+
+    let mut linked_spin = owed_spin(&table, 0);
+    linked(Table::new().spin, 3).write(&mut linked_spin.data, Spin::REFERRAL_AT).unwrap();
+    let result = with_stand_ins().process_instruction(&ix, &accounts(linked_spin));
+    assert_eq!(counters_after(&result.resulting_accounts), Counters { players_referred: 3, players_unreferred: 6, ..Counters::default() }, "a linked player comes off the referred");
 }
 
 fn as_test(ix: casino_core::chain::Instruction) -> Instruction {
@@ -2049,4 +2063,30 @@ fn a_linked_spin_s_bet_without_the_magic_context_still_settles_and_credits_nothi
     assert_eq!(result.raw_result, Ok(()));
     assert!(magic_calls().is_empty(), "nothing scheduled");
     assert_eq!(table.trailer_after(&result.resulting_accounts).stake, STAKE, "the bet itself stands");
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_referrer_s_spin_of_the_oldest_layout_is_rewritten_once_collected_then_linked() {
+    let (player, referrer) = (Table::new(), Table::new());
+    let legacy = |status: SpinStatus| {
+        let mut account = referrer.spin_account(status, 0);
+        account.data.truncate(Spin::SIZE);
+        account.data.resize(Spin::SIZE + 344, 9);
+        account.data.extend_from_slice(&6u64.to_le_bytes());
+        account
+    };
+    let ix = linking_credit(&referrer, &player, 500);
+    let result = with_stand_ins().process_instruction(&ix, &linking_accounts(&ix, legacy(SpinStatus::Collected), owed_spin(&player, 0)));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(referrer.data_after(&result.resulting_accounts).len(), Spin::OBSERVED_SIZE);
+    assert_eq!(referrer.generation_after(&result.resulting_accounts), 6, "the generation kept");
+    assert_eq!(section_after(&referrer, &result.resulting_accounts).owed, 500);
+    assert_eq!(section_after(&player, &result.resulting_accounts).referrer, referrer.spin.to_bytes());
+    assert_eq!(counters_after(&result.resulting_accounts), Counters { players_referred: 1, players_unreferred: 1, owed: 500, earned: 500 });
+
+    let result = with_stand_ins().process_instruction(&ix, &linking_accounts(&ix, legacy(SpinStatus::Rolled), owed_spin(&player, 0)));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(referrer.data_after(&result.resulting_accounts).len(), Spin::SIZE + 352, "a bet in play is left alone");
+    assert_eq!(section_after(&player, &result.resulting_accounts).referrer(), None, "and nobody is linked to it");
 }

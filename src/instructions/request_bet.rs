@@ -13,7 +13,7 @@ use crate::state::Config;
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestBet {
     pub machine_id: u64,
-    /// Who referred the player. Locked only if this bet creates their spin; ignored after.
+    /// A referral code: read only while the player's spin is not linked yet.
     pub referrer: Referrer,
 }
 
