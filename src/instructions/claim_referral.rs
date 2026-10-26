@@ -1,6 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use casino_core::chain::*;
-use casino_core::{pda, referral, CoreError};
+use casino_core::{pda, referral};
 
 use crate::constants::ANALYTICS;
 use crate::state::spin::Spin;
@@ -29,9 +29,11 @@ impl ClaimReferral {
         }
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
         pda::validate(program_id, spin_account, &[b"spin", user.address().as_ref()])?;
-        let section = Spin::referral(spin_account).ok_or(CoreError::NothingToCollect)?;
+        // Nothing owed, or no account at all, is not refused: a refusal would tell anyone who asks
+        // whether a wallet has earnings waiting.
+        let Some(section) = Spin::referral(spin_account) else { return Ok(()) };
         if section.owed == 0 {
-            return Err(CoreError::NothingToCollect.into());
+            return Ok(());
         }
         referral::schedule_pay(
             program_id, house, &[b"house", &[house_bump]], magic_context, magic_program,

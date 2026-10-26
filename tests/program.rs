@@ -1859,7 +1859,8 @@ fn anyone_may_claim_and_the_house_schedules_the_payout() {
     assert_eq!(magic_calls(), vec![6]);
 
     let result = with_stand_ins().process_instruction(&ix, &accounts(0));
-    assert_eq!(result.raw_result, core(casino_core::CoreError::NothingToCollect));
+    assert_eq!(result.raw_result, Ok(()), "nothing owed is not refused");
+    assert!(magic_calls().is_empty(), "and nothing is scheduled");
 }
 
 #[test]
