@@ -150,7 +150,8 @@ enum Command {
         /// receipt (22).
         #[arg(long)]
         scheduled: bool,
-        /// Name this wallet as the referrer: locked only if the bet creates the player's spin.
+        /// A referral code: the referrer's player account in any game, as `referral` prints it.
+        /// Read only while the player's spin is not linked yet.
         #[arg(long)]
         referrer: Option<Pubkey>,
     },
@@ -303,7 +304,7 @@ async fn main() -> Result<()> {
                 return Ok(());
             };
             match (account.data.len() == Spin::OBSERVED_SIZE).then(|| Referral::read(&account.data, Spin::REFERRAL_AT)).flatten() {
-                Some(r) => print_referral(&user, &r),
+                Some(r) => print_referral(&user, &spin_of(&user), &r),
                 None => println!("the spin of {user} is from before referrals: its next bet adds the section"),
             }
             Ok(())
@@ -605,10 +606,11 @@ fn print_counters(c: &Counters) {
     println!("  referrers   owed {} lamports  ·  earned {} lamports", c.owed, c.earned);
 }
 
-fn print_referral(user: &Pubkey, r: &Referral) {
+fn print_referral(user: &Pubkey, code: &Pubkey, r: &Referral) {
     match r.referrer() {
-        Some(by) => println!("{user}  referred by {by} since {}", r.since),
+        Some(by) => println!("{user}  linked to the spin {by} since {}", r.since),
         None => println!("{user}  not referred"),
     }
+    println!("  referral code: {code}");
     println!("  as a referrer: owed {} lamports, earned {} lamports", r.owed, r.earned);
 }

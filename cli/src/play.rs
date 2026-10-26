@@ -73,7 +73,7 @@ impl Round<'_, '_> {
             self.player.receipt(), vault::authority(), config(), house(), spin_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM,
             analytics(), permission::address(&spin_of(&user)), PERMISSION_PROGRAM,
             // No casino floor station: this is a spin played standing up. The magic context is for
-            // the referrer's credit, which a referred spin schedules on every bet.
+            // the referrer's credit, which a linked spin schedules on every bet, or the link.
             vec![solarium_client::wire::AccountMeta::new(MAGIC_CONTEXT, false)],
             ResolveBet { human: user, machine_id: machine, consenter: session, referrer: Referrer(self.referrer.map(|r| r.to_bytes())) },
         ))?;

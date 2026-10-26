@@ -5,7 +5,6 @@ use casino_core::observe::{self, Observable};
 use casino_core::permission;
 use casino_core::ids::MAGIC_CONTEXT_ID;
 use casino_core::referral::{self, Referral, Referrer};
-use pinocchio::sysvars::{clock::Clock, Sysvar};
 use casino_core::{pda, receipt, CoreError};
 
 use crate::constants::{ANALYTICS, PRIVATE_CASINO};
@@ -20,8 +19,9 @@ use crate::state::Config;
 /// becomes the spin's observer for this bet alone, so the reveal can tell the floor the result.
 /// A bet without one clears it.
 ///
-/// A referred player's settle also names the magic context: the stake schedules its referrer's
-/// credit from here, so the client never names the referrer's account.
+/// A linked player's settle, or one that names a referral code, also names the magic context: the
+/// stake schedules its referrer's credit, or the link, from here, so the client never names the
+/// referrer's account.
 /// Accounts: [receipt, vault_authority (signer), config, house, spin, ephemeral_vault,
 ///            magic_program, analytics, spin_permission, permission_program, station?,
 ///            magic_context?]
@@ -33,7 +33,7 @@ pub struct ResolveBet {
     /// its signature. The vault checked it against the user's ledger before settling, which is
     /// the only authorisation this program could not do itself.
     pub consenter: Pubkey,
-    /// Who referred the player, if the bet named anyone. Read only when the spin is created.
+    /// The referral code the bet named, if any: read only while the spin is not linked.
     pub referrer: Referrer,
 }
 
@@ -67,7 +67,6 @@ impl ResolveBet {
         let spin_bump = pda::validate(
             program_id, spin_account, &[b"spin", self.human.as_ref()],
         )?;
-        let first = spin_account.data_len() == 0;
         let kept = Spin::referral(spin_account);
         let (generation, previous_seed) = if spin_account.data_len() == 0 {
             (1, [0; 32])
@@ -113,18 +112,9 @@ impl ResolveBet {
         }
         Spin::set_generation(spin_account, generation)?;
 
-        // The referrer is locked when the spin is first made; a spin grown to this layout was
-        // made before referrals, and its player stays unreferred.
-        let section = match kept {
-            Some(section) => section,
-            None => Referral::new(
-                if first { self.referrer.0.as_ref() } else { None },
-                &self.human.to_bytes(),
-                Clock::get()?.unix_timestamp,
-            ),
-        };
+        // A spin starts unlinked, whether new or grown from before referrals; only a credit links it.
+        let section = kept.unwrap_or_else(Referral::unlinked);
         Spin::write_referral(spin_account, &section)?;
-        let counted = kept.is_none().then(|| section.referrer().is_some());
 
         {
             let s = Spin::load_mut(spin_account)?;
@@ -169,20 +159,27 @@ impl ResolveBet {
         if let Some(slot) = a.bets_placed.get_mut(self.machine_id as usize) {
             casino_core::analytics::count(slot);
         }
-        if let Some(referred) = counted {
-            referral::count_player(Analytics::referrals(analytics_account), referred);
+        if kept.is_none() {
+            referral::count_player(Analytics::referrals(analytics_account));
         }
 
-        // The referrer's credit is owed in lamports, so only a SOL stake earns one.
-        if let Some(referrer) = section.referrer().filter(|_| terms.mint == [0; 32]) {
-            let magic_context = rest.iter().find(|a| *a.address() == MAGIC_CONTEXT_ID)
-                .ok_or(ProgramError::NotEnoughAccountKeys)?;
-            let (account, _) = Pubkey::find_program_address(&[b"spin", referrer.as_ref()], program_id);
-            referral::schedule_credit(
-                program_id, house, &[b"house", &[house_bump]], magic_context, magic_program,
+        // The referrer's credit is owed in lamports, so only a SOL stake earns one; a code still
+        // links at no cut.
+        let amount = if terms.mint == [0; 32] { referral::cut(terms.stake_lamports) } else { 0 };
+        let house_seeds: &[&[u8]] = &[b"house", &[house_bump]];
+        let magic_context = || rest.iter().find(|a| *a.address() == MAGIC_CONTEXT_ID).ok_or(ProgramError::NotEnoughAccountKeys);
+        match (section.referrer(), self.referrer.0) {
+            (Some(account), _) if amount > 0 => referral::schedule_credit(
+                program_id, house, house_seeds, magic_context()?, magic_program,
                 spin_account.address(), generation, &account, &ANALYTICS,
-                crate::SlotsInstruction::CREDIT_REFERRAL, terms.stake_lamports,
-            )?;
+                crate::SlotsInstruction::CREDIT_REFERRAL, amount, false,
+            )?,
+            (None, Some(code)) => referral::schedule_link(
+                program_id, house, house_seeds, magic_context()?, magic_program,
+                &Pubkey::new_from_array(code), spin_account.address(), generation,
+                crate::SlotsInstruction::LINK_REFERRAL, amount,
+            )?,
+            _ => {}
         }
 
         Ok(())

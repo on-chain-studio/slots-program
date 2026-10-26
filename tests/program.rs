@@ -534,7 +534,7 @@ impl Table {
             account.data.extend_from_slice(&first_layout([0xEE; 32]));
         }
         if size == Spin::OBSERVED_SIZE {
-            account.data.extend_from_slice(bytemuck::bytes_of(&Referral::new(None, &self.user.to_bytes(), 0)));
+            account.data.extend_from_slice(bytemuck::bytes_of(&Referral::unlinked()));
         }
         if size == Spin::OBSERVED_SIZE || size == Spin::PRE_REFERRAL_SIZE {
             account.data.extend_from_slice(bytemuck::bytes_of(&observed.unwrap_or(Observable::new(observe::KIND_SLOTS))));
@@ -1638,32 +1638,55 @@ fn magic_context() -> Pubkey {
 /// A spin at the current size whose player is owed `owed`.
 fn owed_spin(table: &Table, owed: u64) -> Account {
     let mut account = table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Collected, 0, 3, None);
-    let section = referral::Referral { owed, earned: owed, ..referral::Referral::new(None, &table.user.to_bytes(), 0) };
+    let section = referral::Referral { owed, earned: owed, ..referral::Referral::unlinked() };
     section.write(&mut account.data, Spin::REFERRAL_AT).unwrap();
     account
 }
 
-#[test]
-#[ignore = "needs cargo build-sbf"]
-fn a_referred_first_bet_locks_its_referrer_and_schedules_the_credit() {
-    let table = Table::fixed();
-    let referrer = Pubkey::new_unique();
-    let ix = referred_bet(&table, referrer, &[magic_context()]);
-    let mut accounts = bet_accounts(&ix, &table, no_spin(), vec![wallet()]);
-    accounts[7].1 = grown_books();
-    let result = with_stand_ins().process_instruction(&ix, &accounts);
-    assert_eq!(result.raw_result, Ok(()));
-    assert_eq!(magic_calls(), vec![12, 6], "created, then the credit scheduled");
-    assert_eq!(calls_to(magic())[0][4..8], (Spin::OBSERVED_SIZE as u32).to_le_bytes());
-    assert_eq!(section_after(&table, &result.resulting_accounts).referrer, referrer.to_bytes());
-    assert_eq!(counters_after(&result.resulting_accounts), Counters { players_referred: 1, ..Counters::default() });
-    assert_eq!(table.trailer_after(&result.resulting_accounts).stake, STAKE, "the trailer still last");
-    println!("resolve_bet, creating a referred spin: {} CU", result.compute_units_consumed);
+/// Whether the Magic stand-in was asked to schedule a task carrying `bytes`.
+fn scheduled(bytes: &[u8]) -> bool {
+    calls_to(magic()).iter().any(|d| d[..4] == 6u32.to_le_bytes() && d.windows(bytes.len()).any(|w| w == bytes))
+}
+
+fn link_data(amount: u64, generation: u64) -> Vec<u8> {
+    let mut data = slots::SlotsInstruction::LINK_REFERRAL.to_le_bytes().to_vec();
+    data.extend_from_slice(&amount.to_le_bytes());
+    data.extend_from_slice(&generation.to_le_bytes());
+    data
+}
+
+fn credit_data(amount: u64) -> Vec<u8> {
+    let mut data = slots::SlotsInstruction::CREDIT_REFERRAL.to_le_bytes().to_vec();
+    data.extend_from_slice(&amount.to_le_bytes());
+    data
+}
+
+fn linked(account: Pubkey, since: i64) -> referral::Referral {
+    referral::Referral { referrer: account.to_bytes(), since, ..referral::Referral::unlinked() }
 }
 
 #[test]
 #[ignore = "needs cargo build-sbf"]
-fn a_referred_bet_without_the_magic_context_is_refused() {
+fn a_first_bet_naming_a_code_schedules_the_link_and_links_nothing_yet() {
+    let table = Table::fixed();
+    let code = Pubkey::new_unique();
+    let ix = referred_bet(&table, code, &[magic_context()]);
+    let mut accounts = bet_accounts(&ix, &table, no_spin(), vec![wallet()]);
+    accounts[7].1 = grown_books();
+    let result = with_stand_ins().process_instruction(&ix, &accounts);
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![12, 6], "created, then the link scheduled");
+    assert_eq!(calls_to(magic())[0][4..8], (Spin::OBSERVED_SIZE as u32).to_le_bytes());
+    assert!(scheduled(&link_data(STAKE / 100, 1)) && scheduled(code.as_ref()));
+    assert_eq!(section_after(&table, &result.resulting_accounts).referrer(), None);
+    assert_eq!(counters_after(&result.resulting_accounts), Counters { players_unreferred: 1, ..Counters::default() });
+    assert_eq!(table.trailer_after(&result.resulting_accounts).stake, STAKE, "the trailer still last");
+    println!("resolve_bet, creating a spin naming a code: {} CU", result.compute_units_consumed);
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_bet_naming_a_code_without_the_magic_context_is_refused() {
     let table = Table::new();
     let ix = referred_bet(&table, Pubkey::new_unique(), &[]);
     let result = with_stand_ins().process_instruction(&ix, &bet_accounts(&ix, &table, no_spin(), vec![]));
@@ -1672,21 +1695,20 @@ fn a_referred_bet_without_the_magic_context_is_refused() {
 
 #[test]
 #[ignore = "needs cargo build-sbf"]
-fn a_player_cannot_refer_themselves() {
+fn a_code_naming_the_player_s_own_spin_is_not_worth_a_task() {
     let table = Table::new();
-    let ix = referred_bet(&table, table.user, &[]);
-    let mut accounts = bet_accounts(&ix, &table, no_spin(), vec![]);
+    let ix = referred_bet(&table, table.spin, &[magic_context()]);
+    let mut accounts = bet_accounts(&ix, &table, no_spin(), vec![wallet()]);
     accounts[7].1 = grown_books();
     let result = with_stand_ins().process_instruction(&ix, &accounts);
     assert_eq!(result.raw_result, Ok(()));
-    assert_eq!(magic_calls(), vec![12], "no credit to schedule");
-    assert_eq!(section_after(&table, &result.resulting_accounts).referrer(), None);
+    assert_eq!(magic_calls(), vec![12], "nothing to schedule");
     assert_eq!(counters_after(&result.resulting_accounts).players_unreferred, 1);
 }
 
 #[test]
 #[ignore = "needs cargo build-sbf"]
-fn a_spin_from_before_referrals_grows_unreferred_whoever_the_bet_names() {
+fn a_spin_from_before_referrals_grows_unlinked_and_may_link() {
     let table = Table::new();
     let ix = referred_bet(&table, Pubkey::new_unique(), &[magic_context()]);
     let before = table.spin_at(Spin::PRE_REFERRAL_SIZE, SpinStatus::Collected, 0, 4, None);
@@ -1694,7 +1716,8 @@ fn a_spin_from_before_referrals_grows_unreferred_whoever_the_bet_names() {
     accounts[7].1 = grown_books();
     let result = with_stand_ins().process_instruction(&ix, &accounts);
     assert_eq!(result.raw_result, Ok(()));
-    assert_eq!(magic_calls(), vec![13], "grown in place, and nothing scheduled");
+    assert_eq!(magic_calls(), vec![13, 6], "grown in place, then the link scheduled");
+    assert!(scheduled(&link_data(STAKE / 100, 5)));
     assert_eq!(table.data_after(&result.resulting_accounts).len(), Spin::OBSERVED_SIZE);
     assert_eq!(section_after(&table, &result.resulting_accounts).referrer(), None);
     assert_eq!(table.generation_after(&result.resulting_accounts), 5);
@@ -1703,21 +1726,23 @@ fn a_spin_from_before_referrals_grows_unreferred_whoever_the_bet_names() {
 
 #[test]
 #[ignore = "needs cargo build-sbf"]
-fn a_referred_spin_s_next_bet_credits_its_referrer_again_and_counts_nobody() {
+fn a_linked_spin_s_next_bet_credits_its_link_whatever_code_it_names() {
     let table = Table::new();
-    let referrer = Pubkey::new_unique();
+    let referrer = Table::new();
     let mut before = table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Collected, 0, 2, None);
-    referral::Referral::new(Some(&referrer.to_bytes()), &table.user.to_bytes(), 9).write(&mut before.data, Spin::REFERRAL_AT).unwrap();
-    // The bet names nobody: the locked referrer is the one credited.
-    let ix = resolve_bet(&table, &[magic_context()]);
+    linked(referrer.spin, 9).write(&mut before.data, Spin::REFERRAL_AT).unwrap();
+    let ix = referred_bet(&table, Pubkey::new_unique(), &[magic_context()]);
     let mut accounts = bet_accounts(&ix, &table, before, vec![wallet()]);
     accounts[7].1 = grown_books();
     let result = with_stand_ins().process_instruction(&ix, &accounts);
     assert_eq!(result.raw_result, Ok(()));
     assert_eq!(magic_calls(), vec![6]);
+    assert!(scheduled(&credit_data(STAKE / 100)) && scheduled(referrer.spin.as_ref()));
+    assert!(!scheduled(&link_data(STAKE / 100, 3)));
     let section = section_after(&table, &result.resulting_accounts);
-    assert_eq!((section.referrer, section.since), (referrer.to_bytes(), 9));
+    assert_eq!((section.referrer, section.since), (referrer.spin.to_bytes(), 9));
     assert_eq!(counters_after(&result.resulting_accounts), Counters::default());
+    println!("resolve_bet, a linked spin: {} CU", result.compute_units_consumed);
 }
 
 #[test]
@@ -1733,7 +1758,7 @@ fn books_not_grown_yet_never_stop_a_bet() {
 fn credit(referrer: &Table, amount: u64) -> Instruction {
     let ix = referral::credit_instruction(
         &core_key(program()), &core_key(pda(&[b"house"])), &core_key(referrer.spin), &slots::constants::ANALYTICS,
-        slots::SlotsInstruction::CREDIT_REFERRAL, amount,
+        slots::SlotsInstruction::CREDIT_REFERRAL, amount, None,
     );
     Instruction::new_with_bytes(
         program(),
@@ -1900,4 +1925,113 @@ fn a_spin_still_owed_is_not_closed_until_it_is_paid() {
     let result = with_stand_ins().process_instruction(&ix, &accounts(0));
     assert_eq!(result.raw_result, Ok(()));
     assert_eq!(magic_calls(), vec![14], "closed once nothing is owed");
+}
+
+fn as_test(ix: casino_core::chain::Instruction) -> Instruction {
+    Instruction::new_with_bytes(
+        program(),
+        &ix.data,
+        ix.accounts.iter().map(|m| AccountMeta { pubkey: fixed(m.pubkey), is_signer: m.is_signer, is_writable: m.is_writable }).collect(),
+    )
+}
+
+fn link_task(code: Pubkey, player: &Table, amount: u64) -> Instruction {
+    as_test(referral::link_instruction(
+        &core_key(program()), &core_key(pda(&[b"house"])), &core_key(code), &core_key(player.spin),
+        slots::SlotsInstruction::LINK_REFERRAL, amount, 3,
+    ))
+}
+
+fn link_accounts(ix: &Instruction, code: Account, spin: Account) -> Vec<(Pubkey, Account)> {
+    let k = |i: usize| ix.accounts[i].pubkey;
+    vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), code), (k(3), spin), (k(4), wallet()), (k(5), builtin(magic(), "fake_magic"))]
+}
+
+/// Any account holding a wallet at the owner's place: another game's, here a stranger program's.
+fn foreign_code(owner: Pubkey) -> Account {
+    let mut data = vec![7u8; 96];
+    data[referral::OWNER_AT..referral::OWNER_AT + 32].copy_from_slice(owner.as_ref());
+    Account { lamports: 1_000_000_000, data, owner: Pubkey::new_unique(), executable: false, rent_epoch: 0 }
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn the_link_task_finds_the_code_owner_s_spin_here_and_schedules_the_linking_credit() {
+    let player = Table::new();
+    let referrer = Table::new();
+    let ix = link_task(Pubkey::new_unique(), &player, 500);
+    let spin = || owed_spin(&player, 0);
+    let result = with_stand_ins().process_instruction(&ix, &link_accounts(&ix, foreign_code(referrer.user), spin()));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![6]);
+    assert!(scheduled(&credit_data(500)) && scheduled(referrer.spin.as_ref()) && scheduled(player.spin.as_ref()));
+    println!("link_referral: {} CU", result.compute_units_consumed);
+
+    for code in [foreign_code(player.user), foreign_code(Pubkey::default()), wallet()] {
+        let result = with_stand_ins().process_instruction(&ix, &link_accounts(&ix, code, spin()));
+        assert_eq!(result.raw_result, Ok(()));
+        assert!(magic_calls().is_empty(), "the player, no one, or nothing at all links nothing");
+    }
+
+    let mut stranger = ix.clone();
+    stranger.accounts[0].pubkey = Pubkey::new_unique();
+    let result = with_stand_ins().process_instruction(&stranger, &link_accounts(&stranger, foreign_code(referrer.user), spin()));
+    assert_eq!(result.raw_result, core(casino_core::CoreError::Unauthorized));
+}
+
+fn linking_credit(referrer: &Table, player: &Table, amount: u64) -> Instruction {
+    as_test(referral::credit_instruction(
+        &core_key(program()), &core_key(pda(&[b"house"])), &core_key(referrer.spin), &slots::constants::ANALYTICS,
+        slots::SlotsInstruction::CREDIT_REFERRAL, amount, Some(&core_key(player.spin)),
+    ))
+}
+
+fn linking_accounts(ix: &Instruction, referrer_spin: Account, player_spin: Account) -> Vec<(Pubkey, Account)> {
+    let mut accounts = credit_accounts(ix, referrer_spin);
+    let mut unreferred = grown_books();
+    bytemuck::from_bytes_mut::<Counters>(&mut unreferred.data[Analytics::SIZE..Analytics::REFERRALS_SIZE]).players_unreferred = 1;
+    accounts[3].1 = unreferred;
+    accounts.push((ix.accounts[6].pubkey, player_spin));
+    accounts
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn the_linking_credit_links_only_to_a_spin_that_exists_then_credits_it() {
+    let player = Table::new();
+    let referrer = Table::new();
+    let ix = linking_credit(&referrer, &player, 500);
+    let with_section = |section: referral::Referral| {
+        let mut account = owed_spin(&player, 0);
+        section.write(&mut account.data, Spin::REFERRAL_AT).unwrap();
+        account
+    };
+
+    let result = with_stand_ins().process_instruction(&ix, &linking_accounts(&ix, owed_spin(&referrer, 0), owed_spin(&player, 0)));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(section_after(&player, &result.resulting_accounts).referrer, referrer.spin.to_bytes());
+    assert_eq!(section_after(&referrer, &result.resulting_accounts).owed, 500);
+    assert_eq!(counters_after(&result.resulting_accounts),
+        Counters { players_referred: 1, players_unreferred: 0, owed: 500, earned: 500 });
+    println!("credit_referral, linking: {} CU", result.compute_units_consumed);
+
+    let result = with_stand_ins().process_instruction(&ix, &linking_accounts(&ix, no_spin(), owed_spin(&player, 0)));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(section_after(&player, &result.resulting_accounts).referrer(), None, "no spin, no link");
+    assert_eq!(counters_after(&result.resulting_accounts).players_referred, 0);
+
+    let result = with_stand_ins().process_instruction(&ix, &linking_accounts(&ix, owed_spin(&referrer, 0), with_section(linked(Pubkey::new_unique(), 4))));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(section_after(&referrer, &result.resulting_accounts).owed, 0, "linked to someone else since");
+
+    let result = with_stand_ins().process_instruction(&ix, &linking_accounts(&ix, owed_spin(&referrer, 0), with_section(linked(referrer.spin, 4))));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(section_after(&player, &result.resulting_accounts).since, 4);
+    assert_eq!(section_after(&referrer, &result.resulting_accounts).owed, 500, "linked to it before: credited once");
+
+    let at_no_cut = linking_credit(&referrer, &player, 0);
+    let result = with_stand_ins().process_instruction(&at_no_cut, &linking_accounts(&at_no_cut, owed_spin(&referrer, 0), owed_spin(&player, 0)));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(section_after(&player, &result.resulting_accounts).referrer, referrer.spin.to_bytes());
+    assert_eq!(section_after(&referrer, &result.resulting_accounts).earned, 0);
 }

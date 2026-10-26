@@ -4,6 +4,7 @@ use casino_core::magicblock::{resize_ephemeral_account, EPHEMERAL_VAULT_ID};
 use casino_core::observe;
 use casino_core::referral::{self, Referral};
 use casino_core::{pda, CoreError};
+use pinocchio::sysvars::{clock::Clock, Sysvar};
 
 use crate::constants::ANALYTICS;
 use crate::state::analytics::Analytics;
@@ -15,7 +16,11 @@ use crate::state::spin::Spin;
 /// A referrer's spin from before referrals is grown to the layout here, unreferred, so their
 /// first credits are not lost waiting for their next bet; the floor's trailer moves with the end.
 /// A spin too old to grow in place, or gone, is left alone: the house keeps that cut.
-/// Accounts: [executor (signer), house, spin (the referrer's), analytics, ephemeral_vault, magic_program]
+///
+/// A credit from a link names the player's spin after these, and links it to the referrer's spin
+/// only if that exists; a player linked to someone else since is left alone, and so is the cut.
+/// Accounts: [executor (signer), house, spin (the referrer's), analytics, ephemeral_vault,
+///            magic_program, player's spin?]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct CreditReferral {
     pub amount: u64,
@@ -32,6 +37,7 @@ impl CreditReferral {
         analytics_account: &AccountInfo,
         ephemeral_vault: &AccountInfo,
         magic_program: &AccountInfo,
+        rest: &[AccountInfo],
     ) -> ProgramResult {
         let program_id = &crate::ID;
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
@@ -44,6 +50,22 @@ impl CreditReferral {
         }
         let user = Spin::load(spin_account)?.user;
         pda::validate(program_id, spin_account, &[b"spin", &user])?;
+
+        if let Some(player) = rest.first() {
+            if player.address() == spin_account.address() || !player.owned_by(program_id) {
+                return Ok(());
+            }
+            let owner = Spin::load(player)?.user;
+            pda::validate(program_id, player, &[b"spin", &owner])?;
+            let Some(mut linked) = Spin::referral(player) else { return Ok(()) };
+            if !linked.link(spin_account.address(), Clock::get()?.unix_timestamp, Analytics::referrals(analytics_account)) {
+                return Ok(());
+            }
+            Spin::write_referral(player, &linked)?;
+            if self.amount == 0 {
+                return Ok(());
+            }
+        }
 
         let mut section = match Spin::referral(spin_account) {
             Some(section) => section,
@@ -66,8 +88,8 @@ impl CreditReferral {
                         tail[at..].copy_from_slice(&trailer);
                     }
                 }
-                referral::count_player(Analytics::referrals(analytics_account), false);
-                Referral::new(None, &user, 0)
+                referral::count_player(Analytics::referrals(analytics_account));
+                Referral::unlinked()
             }
         };
         referral::credit(&mut section, Analytics::referrals(analytics_account), self.amount);
