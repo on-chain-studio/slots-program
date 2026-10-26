@@ -2035,3 +2035,18 @@ fn the_linking_credit_links_only_to_a_spin_that_exists_then_credits_it() {
     assert_eq!(section_after(&player, &result.resulting_accounts).referrer, referrer.spin.to_bytes());
     assert_eq!(section_after(&referrer, &result.resulting_accounts).earned, 0);
 }
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_linked_spin_s_bet_without_the_magic_context_still_settles_and_credits_nothing() {
+    let table = Table::new();
+    let mut before = table.spin_at(Spin::OBSERVED_SIZE, SpinStatus::Collected, 0, 2, None);
+    linked(Table::new().spin, 9).write(&mut before.data, Spin::REFERRAL_AT).unwrap();
+    let ix = resolve_bet(&table, &[]);
+    let mut accounts = bet_accounts(&ix, &table, before, vec![]);
+    accounts[7].1 = grown_books();
+    let result = with_stand_ins().process_instruction(&ix, &accounts);
+    assert_eq!(result.raw_result, Ok(()));
+    assert!(magic_calls().is_empty(), "nothing scheduled");
+    assert_eq!(table.trailer_after(&result.resulting_accounts).stake, STAKE, "the bet itself stands");
+}

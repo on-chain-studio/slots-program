@@ -167,15 +167,19 @@ impl ResolveBet {
         // links at no cut.
         let amount = if terms.mint == [0; 32] { referral::cut(terms.stake_lamports) } else { 0 };
         let house_seeds: &[&[u8]] = &[b"house", &[house_bump]];
-        let magic_context = || rest.iter().find(|a| *a.address() == MAGIC_CONTEXT_ID).ok_or(ProgramError::NotEnoughAccountKeys);
+        let magic_context = rest.iter().find(|a| *a.address() == MAGIC_CONTEXT_ID);
         match (section.referrer(), self.referrer.0) {
-            (Some(account), _) if amount > 0 => referral::schedule_credit(
-                program_id, house, house_seeds, magic_context()?, magic_program,
-                spin_account.address(), generation, &account, &ANALYTICS,
-                crate::SlotsInstruction::CREDIT_REFERRAL, amount, false,
-            )?,
+            // A settle without the magic context — an older client's — still settles; it only
+            // cannot schedule the credit, so that stake earns its referrer nothing.
+            (Some(account), _) if amount > 0 => if let Some(magic_context) = magic_context {
+                referral::schedule_credit(
+                    program_id, house, house_seeds, magic_context, magic_program,
+                    spin_account.address(), generation, &account, &ANALYTICS,
+                    crate::SlotsInstruction::CREDIT_REFERRAL, amount, false,
+                )?
+            },
             (None, Some(code)) => referral::schedule_link(
-                program_id, house, house_seeds, magic_context()?, magic_program,
+                program_id, house, house_seeds, magic_context.ok_or(ProgramError::NotEnoughAccountKeys)?, magic_program,
                 &Pubkey::new_from_array(code), spin_account.address(), generation,
                 crate::SlotsInstruction::LINK_REFERRAL, amount,
             )?,
