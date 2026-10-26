@@ -16,6 +16,8 @@ pub enum GameError {
     InvalidHold        = 13,
     /// `HasPlayed`'s "no": the wallet has never spun.
     NotPlayed          = 14,
+    /// The spin's player is owed referral earnings: claim them before the spin is closed.
+    StillOwed          = 15,
 }
 
 impl From<GameError> for ProgramError {

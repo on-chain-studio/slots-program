@@ -47,3 +47,11 @@ mollusk-svm = { git = "https://github.com/anza-xyz/mollusk", rev = "f14a5ffc9f5c
 solana-account = "4"
 solana-instruction = "3"
 solana-pubkey = "4.4"
+# Stand-ins for the MagicBlock programs and the VRF in the callback tests, as builtins — the same
+# runtime mollusk-svm runs on.
+solana-program-runtime = { version = "4.3", features = ["agave-unstable-api"] }
+
+# Referrals live on casino-core's feature/referrals until it is merged: everything here, the engine
+# and casino-ops included, is sent to it. The port only makes Cargo see a source other than main's.
+[patch."ssh://git@github.com/on-chain-studio/casino-core.git"]
+casino-core = { git = "ssh://git@github.com:22/on-chain-studio/casino-core.git", branch = "feature/referrals" }

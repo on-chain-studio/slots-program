@@ -24,6 +24,9 @@ pub const PRIVATE_CASINO: Pubkey = Pubkey::from_str_const("EzQPZpLj8DccG7M7VCyr9
 /// target lives in the machines themselves — 90% RTP, where scratch cards run 80% + 10% pot.
 pub const TREASURIES: [&[u8]; 1] = [b"house"];
 
+/// `["analytics"]`, pinned so the referral tasks the house schedules need not derive it.
+pub const ANALYTICS: Pubkey = Pubkey::from_str_const("68XX3KGW2DjKgXPt9kUzq8pvUAdMze4BZzs3QhrVL6aa");
+
 impl Casino for Slots {
     const ID: Pubkey = crate::ID;
     /// The ops key alone: it is also the upgrade authority and so is kept private anyway. The dev

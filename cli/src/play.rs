@@ -3,6 +3,7 @@
 //! spin, the reels revealed round by round, a decision where the machine offers one, and the
 //! collect that pays it.
 
+use casino_core::referral::Referrer;
 use anyhow::{bail, Result};
 use casino_core::ids::{PERMISSION_PROGRAM, VAULT_PROGRAM, VRF_PROGRAM};
 use casino_core::permission;
@@ -29,6 +30,8 @@ fn built(result: solarium_client::result::Result<Instruction>) -> Result<Instruc
 struct Round<'p, 'c> {
     player: &'p Player<'c>,
     at: Endpoint,
+    /// A referral code: read only while the player's spin is not linked yet.
+    referrer: Option<Pubkey>,
 }
 
 impl Round<'_, '_> {
@@ -59,14 +62,17 @@ impl Round<'_, '_> {
         let (user, session) = (self.user(), self.player.session.pubkey());
         let request = built(generated::Slots::request_bet_instruction(
             session, user, config(), house(), self.player.receipt(), EPHEMERAL_VAULT, MAGIC_PROGRAM, VAULT_PROGRAM,
-            Treasury::house::<Slots>().ledger, MAGIC_CONTEXT, RequestBet { machine_id: machine },
+            Treasury::house::<Slots>().ledger, MAGIC_CONTEXT, RequestBet { machine_id: machine, referrer: Referrer(self.referrer.map(|r| r.to_bytes())) },
         ))?;
         // The spin's permission rides along: the settle callback makes the new spin private to
         // the wallet the moment it exists, so its history is never readable by a stranger.
         let resolve = built(generated::Slots::resolve_bet_instruction(
             self.player.receipt(), vault::authority(), config(), house(), spin_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM,
             analytics(), permission::address(&spin_of(&user)), PERMISSION_PROGRAM,
-            ResolveBet { human: user, machine_id: machine, consenter: session },
+            // No casino floor station: this is a spin played standing up. The magic context is for
+            // the referrer's credit, which a linked spin schedules on every bet, or the link.
+            vec![solarium_client::wire::AccountMeta::new(MAGIC_CONTEXT, false)],
+            ResolveBet { human: user, machine_id: machine, consenter: session, referrer: Referrer(self.referrer.map(|r| r.to_bytes())) },
         ))?;
         self.player.play(&self.at, &[request, self.player.settle::<Slots>(resolve)]).await?;
         Ok(())
@@ -144,7 +150,7 @@ impl Round<'_, '_> {
     }
 }
 
-pub async fn play(chain: &Chain, wallet: &Keypair, machine: u64, close: bool) -> Result<()> {
+pub async fn play(chain: &Chain, wallet: &Keypair, machine: u64, close: bool, referrer: Option<Pubkey>) -> Result<()> {
     let Some(terms) = crate::machines_on_chain(chain).await?.into_iter().nth(machine as usize) else {
         bail!("machine {machine} is not on the shelf");
     };
@@ -157,7 +163,7 @@ pub async fn play(chain: &Chain, wallet: &Keypair, machine: u64, close: bool) ->
     // Enough for a spin, its retries and a gamble; a deposit tops up only the shortfall.
     let live = player.ready(terms.stake_lamports * 4, |m| println!("  ✅ {m}")).await?;
     println!("  ✅ live on the rollup with {live} lamports");
-    let round = Round { player: &player, at: player.rollup().await? };
+    let round = Round { player: &player, at: player.rollup().await?, referrer };
     let before = player.ledger_at(&round.at).await?.map(|l| l.sol).unwrap_or(0);
 
     println!("2. bet");

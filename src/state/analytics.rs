@@ -30,6 +30,15 @@ pub struct Analytics {
 
 impl Analytics {
     pub const SIZE: usize = size_of::<Self>();
+    /// The size once grown to hold the referral counters, which follow the fields above.
+    pub const REFERRALS_SIZE: usize = Self::SIZE + casino_core::referral::COUNTERS_SIZE;
+
+    /// The referral counters, or `None` on an account not grown to hold them yet.
+    pub fn referrals<'a>(account: &AccountInfo) -> Option<&'a mut casino_core::referral::Counters> {
+        let mut data = account.try_borrow_mut_data().ok()?;
+        let c = casino_core::referral::counters(&mut data, Self::SIZE)?;
+        Some(unsafe { &mut *(c as *mut casino_core::referral::Counters) })
+    }
 
     pub fn load_mut<'a>(account: &AccountInfo) -> Result<&'a mut Self, ProgramError> {
         let mut data = account.try_borrow_mut_data()?;

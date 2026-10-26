@@ -1,18 +1,24 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use casino_core::chain::*;
-use casino_core::magicblock::{create_ephemeral_account, EPHEMERAL_VAULT_ID, MEMBER_READ};
+use casino_core::magicblock::{create_ephemeral_account, resize_ephemeral_account, EPHEMERAL_VAULT_ID, MEMBER_READ};
 use casino_core::permission;
+use casino_core::ids::MAGIC_CONTEXT_ID;
+use casino_core::referral::{self, Referral, Referrer};
 use casino_core::{pda, receipt, CoreError};
 
-use crate::constants::PRIVATE_CASINO;
+use crate::constants::{ANALYTICS, PRIVATE_CASINO};
 use crate::state::analytics::Analytics;
 use crate::state::spin::{self, Spin, SpinStatus};
 use crate::state::Config;
 
 /// Turns a settled stake into a spin. The seed comes later via `RequestReveal`, so a failed VRF
 /// request cannot unwind a bet that is already paid for.
+///
+/// A linked player's settle, or one that names a referral code, also names the magic context after
+/// these: the stake schedules its referrer's credit, or the link, from here, so the client never
+/// names the referrer's account.
 /// Accounts: [receipt, vault_authority (signer), config, house, spin, ephemeral_vault,
-///            magic_program, analytics, spin_permission, permission_program]
+///            magic_program, analytics, spin_permission, permission_program, magic_context?]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct ResolveBet {
     pub human: Pubkey,
@@ -21,6 +27,8 @@ pub struct ResolveBet {
     /// its signature. The vault checked it against the user's ledger before settling, which is
     /// the only authorisation this program could not do itself.
     pub consenter: Pubkey,
+    /// The referral code the bet named, if any: read only while the spin is not linked.
+    pub referrer: Referrer,
 }
 
 impl ResolveBet {
@@ -38,6 +46,7 @@ impl ResolveBet {
         analytics_account: &AccountInfo,
         spin_permission: &AccountInfo,
         permission_program: &AccountInfo,
+        rest: &[AccountInfo],
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
@@ -52,6 +61,7 @@ impl ResolveBet {
         let spin_bump = pda::validate(
             program_id, spin_account, &[b"spin", self.human.as_ref()],
         )?;
+        let kept = Spin::referral(spin_account);
         let (generation, previous_seed) = if spin_account.data_len() == 0 {
             (1, [0; 32])
         } else {
@@ -66,15 +76,26 @@ impl ResolveBet {
 
         let terms = *Config::item(config_account, self.machine_id)?;
 
+        // Terms from before machines carried run rules are another shape: that spin is closed and
+        // created again. One from before referrals only grows at the end, in place, so its address
+        // and the permission keyed to it stay; the house sponsors the difference, as it did the rent.
         if spin_account.data_len() != 0 && spin_account.data_len() < Spin::PERSISTENT_SIZE {
             receipt::close(magic_program, house, spin_account, ephemeral_vault, house_bump)?;
         }
         if spin_account.data_len() == 0 {
             create_ephemeral_account(house, spin_account, ephemeral_vault, magic_program,
-                Spin::PERSISTENT_SIZE as u32,
+                Spin::OBSERVED_SIZE as u32,
                 &[&[b"house", &[house_bump]], &[b"spin", self.human.as_ref(), &[spin_bump]]])?;
+        } else if spin_account.data_len() != Spin::OBSERVED_SIZE {
+            resize_ephemeral_account(house, spin_account, ephemeral_vault, magic_program,
+                Spin::OBSERVED_SIZE as u32, &[&[b"house", &[house_bump]]])?;
+            spin_account.try_borrow_mut_data()?[Spin::REFERRAL_AT..].fill(0);
         }
         Spin::set_generation(spin_account, generation)?;
+
+        // A spin starts unlinked, whether new or grown from before referrals; only a credit links it.
+        let section = kept.unwrap_or_else(Referral::unlinked);
+        Spin::write_referral(spin_account, &section)?;
 
         {
             let s = Spin::load_mut(spin_account)?;
@@ -104,6 +125,32 @@ impl ResolveBet {
         a.lamports_in = a.lamports_in.saturating_add(terms.stake_lamports);
         if let Some(slot) = a.bets_placed.get_mut(self.machine_id as usize) {
             casino_core::analytics::count(slot);
+        }
+        if kept.is_none() {
+            referral::count_player(Analytics::referrals(analytics_account));
+        }
+
+        // The referrer's credit is owed in lamports, so only a SOL stake earns one; a code still
+        // links at no cut.
+        let amount = if terms.mint == [0; 32] { referral::cut(terms.stake_lamports) } else { 0 };
+        let house_seeds: &[&[u8]] = &[b"house", &[house_bump]];
+        let magic_context = rest.iter().find(|a| *a.address() == MAGIC_CONTEXT_ID);
+        match (section.referrer(), self.referrer.0) {
+            // A settle without the magic context — an older client's — still settles; it only
+            // cannot schedule the credit, so that stake earns its referrer nothing.
+            (Some(account), _) if amount > 0 => if let Some(magic_context) = magic_context {
+                referral::schedule_credit(
+                    program_id, house, house_seeds, magic_context, magic_program,
+                    spin_account.address(), generation, &account, &ANALYTICS,
+                    crate::SlotsInstruction::CREDIT_REFERRAL, amount, false,
+                )?
+            },
+            (None, Some(code)) => referral::schedule_link(
+                program_id, house, house_seeds, magic_context.ok_or(ProgramError::NotEnoughAccountKeys)?, magic_program,
+                &Pubkey::new_from_array(code), spin_account.address(), generation,
+                crate::SlotsInstruction::LINK_REFERRAL, amount,
+            )?,
+            _ => {}
         }
 
         Ok(())

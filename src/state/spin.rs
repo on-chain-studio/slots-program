@@ -1,5 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use casino_core::chain::*;
+use casino_core::observe;
+use casino_core::referral::{self, Referral};
 
 use crate::state::config::{MachineConfig, MAX_REELS};
 
@@ -21,7 +23,9 @@ pub enum SpinStatus {
 /// `["spin", user]` — reusable bet state. Collection retains the resolved result.
 ///
 /// Carries its own `terms`, copied from the shelf at purchase, so a rebalance cannot rewrite a
-/// bet someone already owns.
+/// bet someone already owns. After the terms come the generation, the player's [`Referral`]
+/// section and then, last, room for the casino floor's trailer, kept empty here so a spin is laid
+/// out exactly as where the floor runs: `[Spin][terms][generation][referral][trailer]`.
 #[repr(C)]
 #[derive(Pod, Zeroable, Clone, Copy)]
 pub struct Spin {
@@ -53,6 +57,13 @@ impl Spin {
     /// A bet placed with its terms printed after it.
     pub const WITH_TERMS: usize = Self::SIZE + size_of::<MachineConfig>();
     pub const PERSISTENT_SIZE: usize = Self::WITH_TERMS + 8;
+    /// Where the referral section sits: after the generation, before the floor's trailer.
+    pub const REFERRAL_AT: usize = Self::PERSISTENT_SIZE;
+    /// With the referral section and the floor's trailer after the generation: what every bet is
+    /// placed at now. The trailer stays empty until the floor runs here; the size is the floor's
+    /// own, so a spin never needs a second migration when it does. A smaller spin is brought to
+    /// this one by its next bet.
+    pub const OBSERVED_SIZE: usize = Self::PERSISTENT_SIZE + referral::SIZE + observe::SIZE;
 
     /// The sizes before machines carried run rules (344-byte terms). A spin left at one of them
     /// is closed and re-created at the current size on its next bet, which needs its generation.
@@ -76,6 +87,17 @@ impl Spin {
         let bytes = data.get_mut(Self::WITH_TERMS..Self::PERSISTENT_SIZE).ok_or(ProgramError::InvalidAccountData)?;
         bytes.copy_from_slice(&generation.to_le_bytes());
         Ok(())
+    }
+
+    /// The player's referral section, on a spin at the current size.
+    pub fn referral(account: &AccountInfo) -> Option<Referral> {
+        if account.data_len() != Self::OBSERVED_SIZE { return None; }
+        Referral::read(&account.try_borrow().ok()?, Self::REFERRAL_AT)
+    }
+
+    pub fn write_referral(account: &AccountInfo, section: &Referral) -> ProgramResult {
+        if account.data_len() != Self::OBSERVED_SIZE { return Err(ProgramError::InvalidAccountData); }
+        section.write(&mut account.try_borrow_mut_data()?, Self::REFERRAL_AT)
     }
 
     pub fn stops(&self) -> [u8; MAX_REELS] {

@@ -11,6 +11,9 @@
 //! slots-ops play [machine]        one real spin end to end (--close reclaims the ledger)
 //! slots-ops clear-ledger <wallet> empty and close a wallet's ledger, permission and session store
 //! slots-ops status | shelf | analytics | spin [player]
+//! slots-ops referral [player]       a player's referral: who referred them, what they are owed
+//! slots-ops claim-referral <wallet> the house pays what the wallet is owed as a referrer
+//! slots-ops grow-analytics          room for the referral counters (undelegate analytics first)
 //! ```
 //!
 //! Devnet unless `--mainnet`; the TEE unless `--public`; the admin key is `--keypair`,
@@ -31,7 +34,10 @@ use casino_ops::{
     keys, lamports, short, sol, AdminCommand, Chain, Game, Instruction, Keypair, Net, Ops, Player, Pubkey, Signer,
 };
 use clap::{Parser, Subcommand};
+use casino_core::referral::{self, Counters, Referral};
+use casino_ops::magicblock::MAGIC_CONTEXT;
 use slots::instructions::{close_spin::CloseSpin, initialize::Initialize};
+use slots::GrowAnalytics;
 use slots::state::analytics::{self as analytics_state, Analytics};
 use slots::state::config::{MachineConfig, VERSION as CONFIG_VERSION};
 use slots::state::spin::{self, Spin};
@@ -121,6 +127,14 @@ enum Command {
     Spin { player: Option<String> },
     /// Admin: drops a stranded spin and returns its rent to the house. Rollup.
     CloseSpin { player: String },
+    /// A player's referral section: who referred them, and what they are owed and have earned as
+    /// a referrer. Read as the player — a spin is private to them on the TEE — the admin by default.
+    Referral { wallet: Option<PathBuf> },
+    /// Asks the house to pay what this wallet is owed as a referrer into its ledger; the wallet signs.
+    ClaimReferral { wallet: PathBuf },
+    /// Admin, basenet: grows the analytics account to hold the referral counters. Undelegate it
+    /// first (`undelegate-pda analytics`) and delegate it again after (`delegate-pda analytics`).
+    GrowAnalytics,
     /// Plays one real spin end to end on the shelf's machine at this index; the machine's mode
     /// decides how — lines spin once, hold keeps a reel through its respins, gamble climbs a rung.
     Play {
@@ -132,6 +146,10 @@ enum Command {
         /// Play as this keypair rather than the admin.
         #[arg(long)]
         wallet: Option<PathBuf>,
+        /// A referral code: the referrer's player account in any game, as `referral` prints it.
+        /// Read only while the player's spin is not linked yet.
+        #[arg(long)]
+        referrer: Option<Pubkey>,
     },
     /// Empties and closes a wallet's vault ledger: brings it home from whichever rollup holds it,
     /// withdraws everything to the wallet, then closes the ledger, its permission and its session
@@ -263,6 +281,52 @@ async fn main() -> Result<()> {
                 let name = if row.mint == [0; 32] { "SOL".to_string() } else { short(mint) };
                 println!("  paid out    {name} {}", if row.mint == [0; 32] { sol(row.amount) } else { row.amount.to_string() });
             }
+            match referral::counters(&mut account.data.clone(), Analytics::SIZE) {
+                Some(c) => print_counters(c),
+                None => println!("  referrals   not counted yet — run `grow-analytics`"),
+            }
+            Ok(())
+        }
+        Command::Referral { wallet } => {
+            let wallet = match wallet { Some(path) => keys::read(&path)?, None => chain.admin.insecure_clone() };
+            let user = wallet.pubkey();
+            let player = Player::new(&chain, &wallet, slots::ID);
+            let rollup = player.rollup().await?;
+            if let Some(ledger) = player.ledger_at(&rollup).await? {
+                println!("ledger {} lamports", ledger.sol);
+            }
+            let Some(account) = rollup.account(&spin_of(&user)).await? else {
+                println!("no spin for {user}");
+                return Ok(());
+            };
+            match (account.data.len() == Spin::OBSERVED_SIZE).then(|| Referral::read(&account.data, Spin::REFERRAL_AT)).flatten() {
+                Some(r) => print_referral(&user, &spin_of(&user), &r),
+                None => println!("the spin of {user} is from before referrals: its next bet adds the section"),
+            }
+            Ok(())
+        }
+        Command::ClaimReferral { wallet } => {
+            let wallet = keys::read(&wallet)?;
+            let player = Player::new(&chain, &wallet, slots::ID);
+            let user = wallet.pubkey();
+            let at = player.rollup().await?;
+            let ix = built(generated::Slots::claim_referral_instruction(user, user, house(), spin_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM))?;
+            at.send(&[ix], &[&wallet]).await?;
+            println!("✅ claimed: the house's task pays {user} what it is owed");
+            Ok(())
+        }
+        Command::GrowAnalytics => {
+            let account = chain.base.account(&analytics()).await?.context("no analytics account — run `setup`")?;
+            if account.owner != slots::ID {
+                anyhow::bail!("analytics is delegated — run `undelegate-pda analytics` first");
+            }
+            if account.data.len() >= Analytics::REFERRALS_SIZE {
+                println!("⏭  analytics already holds the referral counters ({} bytes)", account.data.len());
+                return Ok(());
+            }
+            let ix = built(generated::Slots::grow_analytics_instruction(admin, analytics(), SYSTEM_PROGRAM, GrowAnalytics { len: Analytics::REFERRALS_SIZE as u32 }))?;
+            chain.base.send(&[ix], &[&chain.admin]).await?;
+            println!("✅ analytics grown {} → {} bytes — now `delegate-pda analytics`", account.data.len(), Analytics::REFERRALS_SIZE);
             Ok(())
         }
         Command::Spin { player } => {
@@ -281,22 +345,28 @@ async fn main() -> Result<()> {
         }
         Command::CloseSpin { player } => {
             let user = key(&player)?;
+            // A spin is private to its player on the TEE, so the admin cannot see one to check for
+            // it: this sends, and the program refuses a spin that is not there.
             let rollup = chain.rollup().await?;
-            if rollup.account(&spin_of(&user)).await?.is_none() {
-                println!("⏭  no spin for {user}");
-                return Ok(());
+            let ix = built(generated::Slots::close_spin_instruction(admin, house(), spin_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM, analytics(), CloseSpin { user }))?;
+            match rollup.send(&[ix], &[&chain.admin]).await {
+                Ok(_) => println!("✅ the spin of {user} is closed, its rent back with the house"),
+                // What a referrer is owed lives on their spin: it is paid out first, then closed.
+                Err(e) if format!("{e:#}").contains(STILL_OWED) => {
+                    let claim = built(generated::Slots::claim_referral_instruction(admin, user, house(), spin_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM))?;
+                    rollup.send(&[claim], &[&chain.admin]).await?;
+                    println!("⏸  {user} is owed referral earnings: claimed — the house's task pays them; run close-spin again once it has");
+                }
+                Err(e) => return Err(e),
             }
-            let ix = built(generated::Slots::close_spin_instruction(admin, house(), spin_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM, CloseSpin { user }))?;
-            rollup.send(&[ix], &[&chain.admin]).await?;
-            println!("✅ the spin of {user} is closed, its rent back with the house");
             Ok(())
         }
-        Command::Play { machine, close, wallet } => {
+        Command::Play { machine, close, wallet, referrer } => {
             let wallet = match wallet {
                 Some(path) => keys::read(&path)?,
                 None => chain.admin.insecure_clone(),
             };
-            play::play(&chain, &wallet, machine, close).await
+            play::play(&chain, &wallet, machine, close, referrer).await
         }
         Command::ClearLedger { wallet } => clear_ledger(&chain, &keys::read(&wallet)?).await,
         Command::Admin(command) => command.run::<Slots>(&chain).await,
@@ -502,4 +572,21 @@ mod tests {
         assert!(ix.accounts[0].is_signer && !ix.accounts[0].is_writable);
         assert!(ix.accounts[3].is_writable && !ix.accounts[2].is_writable);
     }
+}
+
+/// `StillOwed`: the spin's player has referral earnings to be paid before it may close.
+const STILL_OWED: &str = "Custom(15)";
+
+fn print_counters(c: &Counters) {
+    println!("  referred    {} players  ·  unreferred {}", c.players_referred, c.players_unreferred);
+    println!("  referrers   owed {} lamports  ·  earned {} lamports", c.owed, c.earned);
+}
+
+fn print_referral(user: &Pubkey, code: &Pubkey, r: &Referral) {
+    match r.referrer() {
+        Some(by) => println!("{user}  linked to the spin {by} since {}", r.since),
+        None => println!("{user}  not referred"),
+    }
+    println!("  referral code: {code}");
+    println!("  as a referrer: owed {} lamports, earned {} lamports", r.owed, r.earned);
 }
