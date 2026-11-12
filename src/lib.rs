@@ -61,6 +61,13 @@ pub mod utils {
 // checked against a known key, and refused with the game's own error.
 #[program(id = "SLoTSdnmBH5KtNJjhEYw1MeWTKAfRnFfQTTcpgwRn2Q")]
 impl Slots {
+    /// Answered with nothing, whatever the accounts: the callback of a house withdrawal's
+    /// receipt, which has nothing left to do once the vault has moved the value.
+    #[instruction(discriminator = 0)]
+    pub fn noop(&self) -> Result<()> {
+        Ok(())
+    }
+
     #[instruction(discriminator = 1)]
     pub fn initialize<'a>(
         &self,
@@ -276,17 +283,22 @@ impl Slots {
     }
 
     #[instruction(discriminator = 14)]
+    #[allow(clippy::too_many_arguments)]
     pub fn withdraw_house<'a>(
         &self,
         admin: &Signer<'a>,
         house: &mut Account<'a>,
         house_ledger: &mut Account<'a>,
-        admin_ledger: &mut Account<'a>,
+        receipt: &mut Account<'a>,
+        ephemeral_vault: &mut Account<'a>,
+        magic_program: &Account<'a>,
         vault_program: &Account<'a>,
+        magic_context: &mut Account<'a>,
         args: withdraw_house::WithdrawHouse,
     ) -> Result<()> {
         Ok(args.process::<Slots>(
-            admin.info.as_view(), house.info.as_view(), house_ledger.info.as_view(), admin_ledger.info.as_view(), vault_program.info.as_view(),
+            admin.info.as_view(), house.info.as_view(), house_ledger.info.as_view(), receipt.info.as_view(),
+            ephemeral_vault.info.as_view(), magic_program.info.as_view(), vault_program.info.as_view(), magic_context.info.as_view(),
         )?)
     }
 

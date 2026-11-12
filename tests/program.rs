@@ -230,7 +230,7 @@ fn a_hold_missing_its_spin_is_refused_for_the_account() {
 #[ignore = "needs cargo build-sbf"]
 fn numbers_nothing_answers_to_are_invalid_data() {
     let table = Table::new();
-    for unused in [0u64, 15, 25] {
+    for unused in [15u64, 25] {
         let mut instruction = hold(table.user, true, table.spin, 0b001);
         instruction.data[..8].copy_from_slice(&unused.to_le_bytes());
         let result = mollusk().process_instruction(

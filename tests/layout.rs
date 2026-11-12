@@ -294,7 +294,8 @@ mod wire {
 
     #[test]
     fn the_retired_and_reserved_numbers_reach_nothing() {
-        for unused in [0, 15, 25, 255] {
+        assert!(Slots::instruction(&input(0, &[])).is_ok(), "0, a withdrawal's receipt callback, is not the no-op");
+        for unused in [15, 25, 255] {
             assert!(Slots::instruction(&input(unused, &[])).is_err(), "{unused} was answered");
         }
         assert!(Slots::instruction(&[20, 0, 0, 0]).is_err(), "a short tag was answered");

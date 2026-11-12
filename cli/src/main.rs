@@ -426,7 +426,7 @@ mod tests {
         assert_eq!(number(&shared::close_ledger::<Slots>(&admin, &house, &[]).unwrap()), 11);
         assert_eq!(number(&shared::authorize_treasury::<Slots>(&admin, &house).unwrap()), 12);
         assert_eq!(number(&shared::set_privacy::<Slots>(&admin, &house, true).unwrap()), 13);
-        assert_eq!(number(&shared::withdraw_house::<Slots>(&admin, &Pubkey::default(), 1).unwrap()), 14);
+        assert_eq!(number(&shared::withdraw_house::<Slots>(&admin, &Pubkey::default(), 1).unwrap()[0]), 14);
     }
 
     /// `setup-slots.mjs`'s `delegatePdaIx('house', house)`: header(2), one seed, the validator.
